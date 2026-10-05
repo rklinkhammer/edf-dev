@@ -71,7 +71,7 @@ runs. Commands default to ZC702. `check` is a planning dry run, not a build.
 ## Interrupting and resuming builds
 
 The host launcher requires `python3` on macOS. For `./edf boot`, `linux`, `sdk`,
-and `check`, Ctrl+C now explicitly stops and removes that invocation's build
+`check`, and `export`, Ctrl+C now explicitly stops and removes that invocation's build
 container. Docker allows up to 20 seconds to stop before forcing termination.
 Wait for the launcher to return before starting another command for that target.
 This also releases the target build lock; other target containers and interactive
@@ -81,7 +81,7 @@ in their persistent volumes. Rerun the same command to resume incomplete work.
 Output remains live in the terminal and in `validation/<target>-<command>.log`.
 A canceled command exits with status 130; completed builds preserve their
 container exit status. Ctrl+C in `tail -f` or `docker stats` only stops monitoring.
-This cancellation behavior applies to the four build commands above, not the
+This cancellation behavior applies to the commands above, not the
 interactive shell or QEMU controls. Exit QEMU with Ctrl+A, then X.
 
 ## Delete all downloads and shared-state cache
@@ -384,6 +384,73 @@ References:
 - [EDF 26.06.1 machine generation](https://edf.docs.amd.com/en/v26.06.1/shel/running-gen-machine-conf.html)
 - [AMD firmware and overlay recipe class, rel-v2026.1](https://github.com/Xilinx/meta-xilinx/blob/rel-v2026.1/meta-xilinx-core/classes-recipe/dfx_user_dts.bbclass)
 - [Your Arty Z7-20 2021.2 reference project](https://github.com/rklinkhammer/arty-z7-20-2021.2)
+
+## Export binaries and a board-ready SD image
+
+After firmware and Linux builds finish:
+
+```sh
+./edf export zc702
+./edf export zcu111
+```
+
+Inside a target shell, use `edf-build export` instead. No image rebuild is
+needed for this helper. Export takes the target lock and refuses to run while
+another wrapped build, configuration session or QEMU command holds it. It does
+not build recipes or flash devices. Manual BitBake commands bypass these locks;
+finish them before exporting.
+
+Each successful export creates a unique directory on your Mac:
+
+```text
+artifacts/<target>/<UTC-timestamp>-<id>/
+├── boot.bin
+├── system.dtb
+├── uImage or Image
+├── rootfs.tar.gz
+├── sdcard.wic.xz
+├── sdcard.wic.bmap
+├── packages.manifest
+├── partitions.txt
+├── source-manifest.xml
+├── build-info.json
+├── README.txt
+├── SHA256SUMS
+└── sdk/                  # matching SDK installer/metadata, when present
+```
+
+The exporter copies through deployment symlinks to produce self-contained files.
+It copies the standard Linux WIC to temporary Linux storage, inserts this board's
+`boot.bin` into FAT partition 1, reads it back for verification, regenerates the
+block map, and compresses the combined image. The original deploy WIC is hashed
+before and after to confirm it is unchanged. Failed exports do not publish a
+completed directory. Existing successful exports are not overwritten.
+
+`sdcard.wic.xz` is the complete board-specific SD disk image; `rootfs.tar.gz` is
+only a filesystem archive. To use a raw-image writer, decompress the WIC with
+`xz -dk sdcard.wic.xz`, then write the resulting `sdcard.wic` to the entire SD
+card, not into a filesystem on the card. Linux `bmaptool` can write the compressed
+image using the matching regenerated `sdcard.wic.bmap`. Writing an SD image
+overwrites that card. The export helper does not choose a disk or perform writes
+to devices, and physical board boot remains a separate validation step.
+
+Verify exported files on macOS from inside the export directory:
+
+```sh
+shasum -a 256 -c SHA256SUMS
+```
+
+The metadata records selected machines, resolved input paths and hashes, the
+uncompressed SD image hash/size, and SDK filenames. `source-manifest.xml` records
+checkout revisions at export time; it does not certify clean source trees or
+prove those exact revisions were used for every prior build. Existing SDKs are
+collected but not rebuilt or certified current against a later rootfs rebuild.
+The current exporter supports the default `edf-linux-disk-image` artifacts and
+EDF FAT-first-partition SD layout. A future custom image needs explicit support.
+
+Allow disk space for one raw WIC staging copy plus collected files and compressed
+output. Compression uses two threads. Old export directories can be removed
+independently of build volumes and caches.
 
 ## Container provenance and maintenance
 

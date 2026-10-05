@@ -2,13 +2,14 @@
 # Interactive commands execute inside the current container, never launch Docker.
 set -euo pipefail
 usage() {
-  echo 'Usage: edf-build {boot|linux|sdk|check|qemu|qemu-prepare|help}'
+  echo 'Usage: edf-build {boot|linux|sdk|check|qemu|qemu-prepare|export|help}'
   echo "Target: ${EDF_TARGET:-zc702} (selected by ./edf shell TARGET)"
 }
 [[ $# -le 1 ]] || { usage >&2; exit 2; }
 case "${1:-help}" in
   help|-h|--help) usage; exit 0 ;;
   boot|linux|sdk|check) helper=/opt/edf-scripts/build.sh; action=$1 ;;
+  export) helper=/opt/edf-scripts/export.sh; action=export ;;
   qemu) helper=/opt/edf-scripts/qemu.sh; action=boot ;;
   qemu-prepare) helper=/opt/edf-scripts/qemu.sh; action=prepare ;;
   *) usage >&2; exit 2 ;;

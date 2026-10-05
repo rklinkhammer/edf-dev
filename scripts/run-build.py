@@ -44,7 +44,7 @@ def main():
         # No --rm: retain exit status until docker wait has consumed it.
         # Finish creation before handling cancellation so cleanup cannot race it.
         created = start(['compose', 'run', '-d', '--no-deps', '-T', '--name', name,
-                         'shell', '/opt/edf-scripts/build.sh', action],
+                         'shell', '/opt/edf-scripts/export.sh' if action == 'export' else '/opt/edf-scripts/build.sh', action],
                         stdout=subprocess.PIPE)
         _, _ = created.communicate()
         if created.returncode:

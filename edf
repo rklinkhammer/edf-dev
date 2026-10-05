@@ -23,7 +23,7 @@ case "$command" in
   shell)
     dc run --rm --no-deps -T init
     dc run --rm --no-deps shell --noprofile --rcfile /opt/edf-scripts/shell-rc.sh -i ;;
-  boot|linux|sdk|check)
+  boot|linux|sdk|check|export)
     python3 scripts/run-build.py "$command" "$EDF_TARGET" ;;
   qemu|qemu-prepare)
     mode=boot; [[ $command != qemu-prepare ]] || mode=prepare
@@ -35,5 +35,5 @@ case "$command" in
   rootfs-menuconfig)
     dc run --rm --no-deps shell /opt/edf-scripts/configure.sh rootfs ;;
   config) dc config ;;
-  *) echo 'Usage: ./edf {build-container|init|validate|sync|shell|boot|linux|sdk|check|qemu|qemu-prepare|kernel-menuconfig|kernel-saveconfig|rootfs-menuconfig|config} [zc702|zcu111]' >&2; exit 2 ;;
+  *) echo 'Usage: ./edf {build-container|init|validate|sync|shell|boot|linux|sdk|check|export|qemu|qemu-prepare|kernel-menuconfig|kernel-saveconfig|rootfs-menuconfig|config} [zc702|zcu111]' >&2; exit 2 ;;
 esac
