@@ -1,0 +1,39 @@
+#!/bin/bash
+set -euo pipefail
+cd "$(dirname "$0")"
+dc() { docker --context orbstack compose "$@"; }
+command=${1:-shell}
+export EDF_TARGET=${2:-zc702}
+case "$EDF_TARGET" in zc702|zcu111) ;; *) echo "Unknown target: $EDF_TARGET" >&2; exit 2;; esac
+[[ $# -le 2 ]] || { echo 'Usage: ./edf COMMAND [zc702|zcu111]' >&2; exit 2; }
+mkdir -p validation artifacts
+case "$command" in
+  build-container)
+    dc build --pull shell 2>&1 | tee validation/container-build.log
+    dc run --rm --no-deps -T shell -c 'cat /usr/local/share/edf-dev/packages.tsv' > artifacts/container-packages.tsv
+    docker --context orbstack image inspect edf-dev:ubuntu2204-26.06.1 > artifacts/container-image.json ;;
+  init) dc run --rm --no-deps -T init ;;
+  validate)
+    dc config --quiet
+    dc run --rm --no-deps -T init
+    dc run --rm --no-deps -T shell /opt/edf-scripts/validate.sh 2>&1 | tee validation/container-check.log ;;
+  sync)
+    dc run --rm --no-deps -T init
+    dc run --rm --no-deps -T shell /opt/edf-scripts/sync.sh 2>&1 | tee validation/source-sync.log ;;
+  shell)
+    dc run --rm --no-deps -T init
+    dc run --rm --no-deps shell --noprofile --rcfile /opt/edf-scripts/shell-rc.sh -i ;;
+  boot|linux|sdk|check)
+    python3 scripts/run-build.py "$command" "$EDF_TARGET" ;;
+  qemu|qemu-prepare)
+    mode=boot; [[ $command != qemu-prepare ]] || mode=prepare
+    dc run --rm --no-deps shell /opt/edf-scripts/qemu.sh "$mode" ;;
+  kernel-menuconfig|linux-menuconfig)
+    dc run --rm --no-deps shell /opt/edf-scripts/configure.sh kernel ;;
+  kernel-saveconfig)
+    dc run --rm --no-deps -T shell /opt/edf-scripts/configure.sh save-kernel ;;
+  rootfs-menuconfig)
+    dc run --rm --no-deps shell /opt/edf-scripts/configure.sh rootfs ;;
+  config) dc config ;;
+  *) echo 'Usage: ./edf {build-container|init|validate|sync|shell|boot|linux|sdk|check|qemu|qemu-prepare|kernel-menuconfig|kernel-saveconfig|rootfs-menuconfig|config} [zc702|zcu111]' >&2; exit 2 ;;
+esac

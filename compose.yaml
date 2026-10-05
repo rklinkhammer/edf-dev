@@ -1,0 +1,41 @@
+name: edf-dev
+x-common: &common
+  image: edf-dev:ubuntu2204-26.06.1
+  pull_policy: never
+  platform: linux/amd64
+  working_dir: /home/amd-edf/edf
+  volumes:
+    - workspace:/home/amd-edf/edf
+    - downloads:/home/amd-edf/edf/downloads
+    - sstate-cache:/home/amd-edf/edf/sstate-cache
+    - ./scripts:/opt/edf-scripts:ro
+    - ./config:/opt/edf-config:ro
+    - ./hardware:/hardware:ro
+    - ./artifacts:/artifacts
+  security_opt: [no-new-privileges:true]
+  cap_drop: [ALL]
+services:
+  init:
+    <<: *common
+    user: "0:0"
+    cap_add: [CHOWN]
+    entrypoint: ["/bin/bash", "-ec"]
+    command: ['chown 1000:1000 /home/amd-edf/edf /home/amd-edf/edf/downloads /home/amd-edf/edf/sstate-cache']
+  shell:
+    <<: *common
+    build:
+      context: .
+      dockerfile: Dockerfile
+    user: "1000:1000"
+    init: true
+    stdin_open: true
+    tty: true
+    environment:
+      GIT_CONFIG_GLOBAL: /home/amd-edf/edf/gitconfig
+      EDF_TARGET: ${EDF_TARGET:-zc702}
+    entrypoint: ["/bin/bash"]
+    command: ["--noprofile", "--norc", "-i"]
+volumes:
+  workspace:
+  downloads:
+  sstate-cache:
