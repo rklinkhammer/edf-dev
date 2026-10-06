@@ -6,13 +6,13 @@ id
 . /etc/os-release
 [[ $ID == ubuntu && $VERSION_ID == 22.04 ]]
 locale charmap | grep -qi 'UTF-8'
-for tool in git repo python3 gcc g++ make gawk wget diffstat chrpath socat cpio xz zstd lz4; do
+for tool in git git-lfs repo python3 gcc g++ make gawk wget diffstat chrpath socat cpio xz zstd lz4; do
   command -v "$tool"
 done
 python3 -c 'import yaml, jinja2, pexpect, git'
 python3 - <<'PY'
 import fcntl, pathlib, tempfile
-for base in ['/home/amd-edf/edf','/home/amd-edf/edf/downloads','/home/amd-edf/edf/sstate-cache']:
+for base in ['/home/amd-edf/microchip','/home/amd-edf/edf','/home/amd-edf/edf/downloads','/home/amd-edf/edf/sstate-cache']:
     with tempfile.TemporaryDirectory(prefix='.edf-check-',dir=base) as name:
         p=pathlib.Path(name)
         (p/'case').write_text('lower')

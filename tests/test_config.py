@@ -4,6 +4,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -24,12 +25,38 @@ class ConfigurationTests(unittest.TestCase):
                 menu['save'](path, values)
             self.assertEqual(path.read_bytes(), original)
 
+    def test_rootfs_recipe_selection(self):
+        for recipe in ('edf-linux-disk-image', 'mchp-base-image'):
+            with self.subTest(recipe=recipe), tempfile.TemporaryDirectory() as directory:
+                path = Path(directory)/'rootfs.conf'
+                values = menu['load'](path)
+                values['add_packages'] = 'strace'
+                with patch.dict(os.environ, IMAGE_RECIPE=recipe):
+                    menu['save'](path, values)
+                self.assertIn(f'IMAGE_INSTALL:append:pn-{recipe}', path.read_text())
+
     def test_rootfs_preserves_unmanaged_file(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory)/'rootfs.conf'
             path.write_text('# manually maintained\n')
             with self.assertRaises(ValueError):
                 menu['load'](path)
+
+    def test_kernel_provider_and_machine_selection(self):
+        for provider, machine in [('linux-xlnx', 'amd-cortexa9thf-neon-common'),
+                                  ('linux-xlnx', 'amd-cortexa53-common'),
+                                  ('linux-mchp', 'mpfs-disco-kit')]:
+            with self.subTest(machine=machine), tempfile.TemporaryDirectory() as directory:
+                build = Path(directory)
+                work = build/'work'; work.mkdir()
+                (build/'conf').mkdir()
+                (work/'fragment.cfg').write_text('CONFIG_TEST=y\n')
+                (build/'kernel-workdir.txt').write_text(str(work)+'\n')
+                subprocess.run([sys.executable, str(ROOT/'scripts/save-kernel.py'), str(build)],
+                               check=True, capture_output=True,
+                               env={**os.environ, 'KERNEL_RECIPE': provider, 'LINUX_MACHINE': machine})
+                self.assertIn(f'SRC_URI:append:pn-{provider}:{machine}',
+                              (build/'conf/edf-kernel.conf').read_text())
 
     def test_incremental_kernel_save_keeps_prior_choices(self):
         with tempfile.TemporaryDirectory() as directory:

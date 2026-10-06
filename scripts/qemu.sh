@@ -2,6 +2,8 @@
 # Runs inside the EDF container. The lock covers preparation and the guest lifetime.
 set -eo pipefail
 case "${1:-boot}" in boot|prepare) ;; *) echo 'Usage: ./edf qemu[-prepare] [TARGET]' >&2; exit 2;; esac
+source /opt/edf-config/targets.sh
+[[ $QEMU_SUPPORTED == 1 ]] || { echo "Discovery Kit QEMU boot is not implemented; use physical hardware." >&2; exit 2; }
 exec 8>/home/amd-edf/edf/.edf-sources.lock
 flock -n -s 8 || { echo "Source sync is active." >&2; exit 1; }
 source /opt/edf-scripts/yocto-env.sh >/dev/null

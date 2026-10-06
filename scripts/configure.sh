@@ -26,7 +26,7 @@ case "$mode" in
     trap 'printf "%s\n" "$?" > "$BUILDDIR/kernel-menuconfig.status"' EXIT
     printf 'OE_TERMINAL = "tmux-new-window"\n' > "$BUILDDIR/conf/edf-menu-terminal.conf"
     bitbake -R "$BUILDDIR/conf/edf-menu-terminal.conf" -c menuconfig virtual/kernel
-    printf '\nTo preserve saved changes across clean builds, run ./edf kernel-saveconfig.\n'
+    printf '\nSave the fragment with edf-build kernel-saveconfig, or on macOS: ./edf kernel-saveconfig %s\n' "$EDF_TARGET"
     ;;
   save-kernel)
     bitbake -c diffconfig virtual/kernel

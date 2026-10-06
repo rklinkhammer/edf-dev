@@ -4,8 +4,8 @@ cd "$(dirname "$0")"
 dc() { docker --context orbstack compose "$@"; }
 command=${1:-shell}
 export EDF_TARGET=${2:-zc702}
-case "$EDF_TARGET" in zc702|zcu111) ;; *) echo "Unknown target: $EDF_TARGET" >&2; exit 2;; esac
-[[ $# -le 2 ]] || { echo 'Usage: ./edf COMMAND [zc702|zcu111]' >&2; exit 2; }
+case "$EDF_TARGET" in zc702|zcu111|mpfs-disco-kit) ;; *) echo "Unknown target: $EDF_TARGET" >&2; exit 2;; esac
+[[ $# -le 2 ]] || { echo 'Usage: ./edf COMMAND [zc702|zcu111|mpfs-disco-kit]' >&2; exit 2; }
 mkdir -p validation artifacts
 case "$command" in
   build-container)
@@ -19,7 +19,7 @@ case "$command" in
     dc run --rm --no-deps -T shell /opt/edf-scripts/validate.sh 2>&1 | tee validation/container-check.log ;;
   sync)
     dc run --rm --no-deps -T init
-    dc run --rm --no-deps -T shell /opt/edf-scripts/sync.sh 2>&1 | tee validation/source-sync.log ;;
+    dc run --rm --no-deps -T shell /opt/edf-scripts/sync.sh 2>&1 | tee "validation/$EDF_TARGET-source-sync.log" ;;
   shell)
     dc run --rm --no-deps -T init
     dc run --rm --no-deps shell --noprofile --rcfile /opt/edf-scripts/shell-rc.sh -i ;;
@@ -35,5 +35,5 @@ case "$command" in
   rootfs-menuconfig)
     dc run --rm --no-deps shell /opt/edf-scripts/configure.sh rootfs ;;
   config) dc config ;;
-  *) echo 'Usage: ./edf {build-container|init|validate|sync|shell|boot|linux|sdk|check|export|qemu|qemu-prepare|kernel-menuconfig|kernel-saveconfig|rootfs-menuconfig|config} [zc702|zcu111]' >&2; exit 2 ;;
+  *) echo 'Usage: ./edf {build-container|init|validate|sync|shell|boot|linux|sdk|check|export|qemu|qemu-prepare|kernel-menuconfig|kernel-saveconfig|rootfs-menuconfig|config} [zc702|zcu111|mpfs-disco-kit]' >&2; exit 2 ;;
 esac

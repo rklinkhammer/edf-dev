@@ -9,11 +9,15 @@ exec 9>"/home/amd-edf/edf/builds/$EDF_TARGET/.edf-build.lock"
 flock -n 9 || { echo 'Another command is using this target build directory.' >&2; exit 1; }
 source /opt/edf-scripts/yocto-env.sh
 case "${1:-}" in
-  boot) MACHINE="$BOARD_MACHINE" bitbake xilinx-bootbin ;;
-  linux) MACHINE="$LINUX_MACHINE" bitbake edf-linux-disk-image ;;
-  sdk) MACHINE="$LINUX_MACHINE" bitbake edf-linux-disk-image -c populate_sdk ;;
+  boot)
+    MACHINE="$BOARD_MACHINE" bitbake "$BOOT_RECIPE"
+    if [[ $EDF_VENDOR == microchip ]]; then
+      echo 'Built U-Boot/HSS payload inputs. Board HSS and FPGA programming are separate.'
+    fi ;;
+  linux) MACHINE="$LINUX_MACHINE" bitbake "$IMAGE_RECIPE" ;;
+  sdk) MACHINE="$LINUX_MACHINE" bitbake "$IMAGE_RECIPE" -c populate_sdk ;;
   check)
-    MACHINE="$BOARD_MACHINE" bitbake -n --no-setscene xilinx-bootbin
-    MACHINE="$LINUX_MACHINE" bitbake -n --no-setscene edf-linux-disk-image ;;
+    MACHINE="$BOARD_MACHINE" bitbake -n --no-setscene "$BOOT_RECIPE"
+    MACHINE="$LINUX_MACHINE" bitbake -n --no-setscene "$IMAGE_RECIPE" ;;
   *) echo 'Unknown build action' >&2; exit 2 ;;
 esac

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """Small EDF wrapper UI for Yocto image settings, not a PetaLinux package catalog."""
+import os
 import curses
 import json
 from pathlib import Path
@@ -29,7 +30,7 @@ def save(path, values):
         tokens = values[key].split()
         if any(not re.fullmatch(r'[a-zA-Z0-9][a-zA-Z0-9+_.-]*', token) for token in tokens):
             raise ValueError('Use space-separated package/feature names; no quotes or expressions.')
-        lines.append(f'{variable}:pn-edf-linux-disk-image = " {" ".join(tokens)}"')
+        lines.append(f'{variable}:pn-{os.environ.get("IMAGE_RECIPE", "edf-linux-disk-image")} = " {" ".join(tokens)}"')
     pending = path.with_suffix('.tmp')
     pending.write_text('\n'.join(lines)+'\n')
     pending.replace(path)
@@ -47,9 +48,9 @@ def menu(screen, path, values):
         def put(row, text, attr=0):
             if row < height-1:
                 screen.addnstr(row, 0, text, max(1, width-1), attr)
-        put(0, 'EDF RootFS configuration (Yocto image settings)', curses.A_BOLD)
+        put(0, f'RootFS: {os.environ.get("EDF_TARGET", "selected target")} / {os.environ.get("IMAGE_RECIPE", "image")}', curses.A_BOLD)
         put(2, 'Up/Down: select   Enter: edit   s: save   q/Esc: cancel')
-        put(3, 'Names are space-separated. The existing EDF baseline stays in place.')
+        put(3, 'Names are space-separated. The selected image baseline stays in place.')
         put(4, 'Removing a direct package does not remove dependencies of package groups.')
         for number, label in enumerate(labels):
             value = values[FIELDS[number][0]] if number < len(FIELDS) else ''
@@ -91,7 +92,7 @@ if __name__ == '__main__':
         if not sys.stdin.isatty() or not sys.stdout.isatty():
             sys.exit('Run rootfs-menuconfig in an interactive terminal.')
         saved = curses.wrapper(menu, path, values)
-        print(f'Saved {path}. Rebuild with ./edf linux.' if saved else 'Cancelled; no RootFS settings changed.')
+        print(f'Saved {path}. Rebuild with edf-build linux in the selected target shell.' if saved else 'Cancelled; no RootFS settings changed.')
     except KeyboardInterrupt:
         sys.exit("Cancelled; no RootFS settings changed.")
     except (OSError, ValueError, curses.error) as error:

@@ -1,102 +1,314 @@
-# EDF development container
+# EDF and PolarFire SoC development environment
 
-Locally maintained build host for AMD EDF **26.06.1**, built from Ubuntu 22.04.
-This is our Dockerfile, not a reproduction of AMD's unpublished container recipe.
-Both boards use this Compose environment with separate target build directories.
+One Ubuntu 22.04 build container supports three targets: AMD ZC702, AMD ZCU111,
+and the Microchip PolarFire SoC Discovery Kit. The container runs **x86-64 Linux
+(`linux/amd64`)** through OrbStack/Rosetta on Apple Silicon. The target CPU
+architecture is selected by Yocto; it is independent of the container architecture.
+SDK installers also run on x86-64 Linux and cross-compile for the selected target.
 
-## Manual fresh build: ZC702 and ZCU111
+The project is `/Volumes/Zeus/workspace/edf-dev`. OrbStack's managed data is at
+`/Volumes/Zeus/orbstack`. Keep these directories separate: **never select the
+project directory as OrbStack's data location**. The project uses named Docker
+volumes for sources, builds and caches, not macOS bind mounts for those files.
 
-The first target is named `zc702`, not `zcu702`. Run these commands on macOS
-with OrbStack running. Nothing starts automatically. For an existing workspace,
-perform the full reset below first.
+## Targets and recipes
+
+| Target argument | Board / Linux CPU architecture | Source release | Firmware machine | Linux image machine | Linux image recipe |
+| --- | --- | --- | --- | --- | --- |
+| `zc702` | Zynq-7000 ZC702 / Cortex-A9, ARM32 | AMD EDF `amd-edf-rel-v26.06.1` | `zynq-zc702-sdt-full` | `amd-cortexa9thf-neon-common` | `edf-linux-disk-image` |
+| `zcu111` | Zynq UltraScale+ RFSoC ZCU111 / Cortex-A53, ARM64 | AMD EDF `amd-edf-rel-v26.06.1` | `zynqmp-zcu111-sdt-full` | `amd-cortexa53-common` | `edf-linux-disk-image` |
+| `mpfs-disco-kit` | PolarFire SoC Discovery Kit / RISC-V 64-bit | Microchip `linux4microchip-2026.04` | `mpfs-disco-kit` | `mpfs-disco-kit` | `mchp-base-image` |
+
+The target is `zc702`, not `zcu702`. Commands default to `zc702` when the target
+argument is omitted; examples below specify it explicitly. Arty Z7-20 remains
+future work and is not interchangeable with ZC702 firmware.
+
+| Operation | ZC702 | ZCU111 | Discovery Kit |
+| --- | --- | --- | --- |
+| `boot` | `xilinx-bootbin` board boot image | `xilinx-bootbin` board boot image | `virtual/bootloader` → `u-boot-mchp`, including HSS payload |
+| `linux` | EDF Linux image | EDF Linux image | Microchip Linux image, including bootloader dependencies |
+| `sdk` | x86-64 Linux SDK targeting ARM32 | x86-64 Linux SDK targeting ARM64 | x86-64 Linux SDK targeting RISC-V 64-bit |
+| Kernel configuration | `linux-xlnx` | `linux-xlnx` | `linux-mchp` |
+| RootFS configuration | Selected image's packages/features | Selected image's packages/features | Selected image's packages/features |
+| `qemu` / `qemu-prepare` | Implemented | Implemented; no RF/PL hardware validation | Not implemented; command reports unsupported |
+| `export` | Board-specific `.wic.xz` and artifacts | Board-specific `.wic.xz` and artifacts | Vendor-layout `.wic.gz` and artifacts |
+
+## Storage: volumes, architectures and artifacts
+
+All four named volumes are Linux-backed and managed by OrbStack within its data
+location on Zeus. Their names do not imply a fixed allocation or a dedicated CPU
+architecture. Removing a container keeps them; `docker compose down -v` deletes
+this project's named volumes.
+
+| Named volume | Mount inside container | Targets / architectures supported | Contents |
+| --- | --- | --- | --- |
+| `edf-dev_workspace` | `/home/amd-edf/edf` | **All three:** ARM32, ARM64 and RISC-V 64-bit | Shared AMD source checkout; separate `builds/<target>/` trees for **every target**, including PolarFire; configuration, temporary work, deployed firmware/Linux images, SDK installers and staged AMD QEMU disks |
+| `edf-dev_microchip-workspace` | `/home/amd-edf/microchip` | Discovery Kit / RISC-V 64-bit | Separate Microchip manifest and source checkout. Its build outputs are in `edf-dev_workspace`, not here |
+| `edf-dev_downloads` | `/home/amd-edf/edf/downloads` | All three targets plus their host build tools | `DL_DIR`: downloaded archives, fetched Git repositories and other recipe inputs |
+| `edf-dev_sstate-cache` | `/home/amd-edf/edf/sstate-cache` | All three targets plus compatible host/native tasks | `SSTATE_DIR`: reusable task results, selected by Yocto signatures and architecture metadata |
+
+The downloads and sstate mounts overlay subdirectories of the main workspace;
+their bytes belong to their own volumes. Sharing sstate does not mix target
+binaries: only compatible task signatures can be reused.
+
+| Target | Build directory inside container | Deployment outputs |
+| --- | --- | --- |
+| `zc702` | `/home/amd-edf/edf/builds/zc702` | `tmp/deploy/images/zynq-zc702-sdt-full/`, `tmp/deploy/images/amd-cortexa9thf-neon-common/`, `tmp/deploy/sdk/` |
+| `zcu111` | `/home/amd-edf/edf/builds/zcu111` | `tmp/deploy/images/zynqmp-zcu111-sdt-full/`, `tmp/deploy/images/amd-cortexa53-common/`, `tmp/deploy/sdk/` |
+| `mpfs-disco-kit` | `/home/amd-edf/edf/builds/mpfs-disco-kit` | `tmp/deploy/images/mpfs-disco-kit/`, `tmp/deploy/sdk/` |
+
+Deployment paths in the last column are relative to that target's build directory.
+Each target owns its `conf/` and `tmp/`; never share `TMPDIR` between concurrent
+builds. AMD targets share one source checkout; Microchip uses its separate checkout.
+
+The following paths are **host directories, not named volumes**. Relative paths
+are under `/Volumes/Zeus/workspace/edf-dev`.
+
+| Host path | Container mount | Targets / purpose |
+| --- | --- | --- |
+| `scripts/` | `/opt/edf-scripts` (read-only) | Shared launch, configuration, QEMU and export helpers |
+| `config/` | `/opt/edf-config` (read-only) | All target and recipe mappings |
+| `hardware/` | `/hardware` (read-only) | User-provided hardware inputs; mounting files does not automatically include them in an image |
+| `artifacts/` | `/artifacts` (read/write) | Exports under `<target>/<timestamp>-<id>/`, interactive logs under `logs/<target>/`, source manifests and container inventory |
+| `validation/` | Not mounted | Host command logs and validation results |
+| `layers/` (future) | Not currently mounted | Proposed custom layer sources; see custom integration below |
+
+Docker images and Docker build-layer caches also live in OrbStack's managed
+storage, outside these four named volumes. Deleting Yocto caches does not delete
+Docker's image-layer cache or host exports.
+
+## Setup and source synchronization
+
+Run on macOS with OrbStack running. This builds the shared host image once;
+normal board builds do not require rebuilding it for each architecture.
 
 ```sh
-cd ~/workspace/edf-dev
-docker --context orbstack compose build --pull --no-cache shell
-./edf build-container  # record image/package inventory using the rebuilt image
-./edf validate         # initialize volumes and check the host
-./edf sync             # download release-pinned source repositories
+cd /Volumes/Zeus/workspace/edf-dev
+./edf build-container
+./edf validate
+
+# One AMD sync serves both ZC702 and ZCU111.
+./edf sync zc702
+
+# Separate Microchip checkout; run if using the Discovery Kit.
+./edf sync mpfs-disco-kit
 ```
 
-Empty local caches alone do not prevent remote prebuilt sstate downloads.
-For local compilation, run this once after sync, before either target build:
+For a fully fresh test, use the reset instructions below first. A source sync
+only downloads the release-pinned checkouts; it does not build board images.
+The helpers prevent source sync during wrapped builds. Direct BitBake commands
+bypass those locks and must be coordinated manually.
+
+### Cache policy and free-space thresholds
+
+All targets use `config/build-policy.inc`: remote sstate and the upstream hash
+service are disabled, the SDK host is x86-64 Linux, and the disk monitor stops
+scheduling below **15 GiB** free and halts below **10 GiB** on build/download
+storage. Local downloads and compatible sstate remain reusable. These thresholds
+are free-space guards, not volume-size limits.
+
+The shared policy is included when a target environment is initialized, including
+existing build directories. It supersedes earlier vendor defaults. To customize
+one target, put overrides in that build directory's `conf/edf-policy.conf`, which
+is included afterward and is never overwritten by the helper. For example:
 
 ```sh
-for target in zc702 zcu111; do
-  EDF_TARGET="$target" docker --context orbstack compose run --rm --no-deps -T shell -ec '
-    source /opt/edf-scripts/yocto-env.sh
-    cat >> conf/local.conf <<"CONF"
-
-# Manual source-build policy
-SSTATE_MIRRORS = ""
-BB_HASHSERVE_UPSTREAM = ""
-BB_DISKMON_DIRS = "STOPTASKS,${TMPDIR},20G,100K STOPTASKS,${DL_DIR},20G,100K HALT,${TMPDIR},10G,50K"
-CONF
-  '
-done
+./edf shell zc702    # or zcu111 / mpfs-disco-kit
+# Inside the shell:
+source /opt/edf-scripts/yocto-env.sh
+# Edit conf/edf-policy.conf here for this target only.
 ```
 
-Normal source mirrors and required binary inputs (reference hardware, uninative)
-remain available. Compatible tasks compiled for the first board can be reused
-for the second. This does not synthesize a Vivado design.
+Normal source mirrors and required binary inputs remain available. Empty local
+downloads/sstate plus these defaults avoid remote sstate reuse, but existing
+build outputs can still avoid compilation; use the full reset for a clean test.
+Four build/parse workers and `-j4` are configured per target; build sequentially
+to limit CPU, memory and disk pressure.
 
-Build sequentially to limit CPU, memory and disk pressure:
+## Build workflow for every target
+
+Choose one shell; the prompt identifies the selected target:
 
 ```sh
-# ZC702: Cortex-A9 / ARM32
+./edf shell zc702
+# Or: ./edf shell zcu111
+# Or: ./edf shell mpfs-disco-kit
+```
+
+Inside that shell, the same command sequence applies:
+
+```sh
+edf-build check    # dependency-planning dry run, not compilation
+edf-build boot
+edf-build linux
+edf-build sdk      # optional, separate SDK build
+edf-build export
+```
+
+For AMD, complete both `boot` and `linux` before QEMU or export. For the Discovery
+Kit, `linux` includes the U-Boot/payload dependencies, so the separate `boot` step
+is optional. `boot` alone never produces the complete Linux SD image.
+
+Equivalent host commands, shown for all targets:
+
+```sh
+# ZC702 / ARM32
 ./edf boot zc702
 ./edf linux zc702
-./edf qemu zc702
-# Exit QEMU: Ctrl+A, then X before continuing.
+./edf sdk zc702       # optional
+./edf export zc702
 
-# ZCU111: Cortex-A53 / ARM64
+# ZCU111 / ARM64
 ./edf boot zcu111
 ./edf linux zcu111
-./edf qemu zcu111
-# Exit QEMU: Ctrl+A, then X.
+./edf sdk zcu111      # optional
+./edf export zcu111
+
+# Discovery Kit / RISC-V 64-bit
+./edf boot mpfs-disco-kit    # optional before linux
+./edf linux mpfs-disco-kit
+./edf sdk mpfs-disco-kit    # optional
+./edf export mpfs-disco-kit
 ```
 
-Optional SDKs are separate builds:
+`edf-build` initializes Yocto in a child process; it does not initialize the parent
+shell for direct BitBake commands. To invoke BitBake manually, initialize explicitly:
 
 ```sh
-./edf sdk zc702
-./edf sdk zcu111
+# Inside ./edf shell mpfs-disco-kit:
+source /opt/edf-scripts/yocto-env.sh
+bitbake -C compile u-boot-mchp     # force U-Boot recompilation
 ```
 
-SDK installers go to each target's `tmp/deploy/sdk/` in the workspace volume.
-Their host is x86-64 Linux; their compiler target matches the board.
-Build logs are `validation/<target>-<command>.log`, overwritten on subsequent
-runs. Commands default to ZC702. `check` is a planning dry run, not a build.
+Then run `edf-build linux` and `edf-build export` to update and collect the SD
+image. Microchip's `payload.bin` contains U-Boot for HSS; it is **not board HSS
+firmware**. Install a compatible Discovery Kit FPGA reference design and HSS
+separately using Microchip's tools. These commands do not run Vivado/Libero or
+program FPGA hardware. Use a fresh shell for SDK application development; do not
+mix a sourced SDK environment with BitBake.
 
-## Interrupting and resuming builds
+## Configuration, QEMU and logs
 
-The host launcher requires `python3` on macOS. For `./edf boot`, `linux`, `sdk`,
-`check`, and `export`, Ctrl+C now explicitly stops and removes that invocation's build
-container. Docker allows up to 20 seconds to stop before forcing termination.
-Wait for the launcher to return before starting another command for that target.
-This also releases the target build lock; other target containers and interactive
-shells are left alone. Downloads, shared state and completed build files remain
-in their persistent volumes. Rerun the same command to resume incomplete work.
-
-Output remains live in the terminal and in `validation/<target>-<command>.log`.
-A canceled command exits with status 130; completed builds preserve their
-container exit status. Ctrl+C in `tail -f` or `docker stats` only stops monitoring.
-This cancellation behavior applies to the commands above, not the
-interactive shell or QEMU controls. Exit QEMU with Ctrl+A, then X.
-
-## Delete all downloads and shared-state cache
-
-These commands delete data. First stop any automatic runners that could launch
-new containers. The loop stops/removes only this Compose project's containers,
-including manual shells, QEMU and SDK builds.
+Kernel and RootFS configuration are available for every supported target. On macOS:
 
 ```sh
-cd ~/workspace/edf-dev
+target=mpfs-disco-kit    # or zc702 / zcu111
+./edf kernel-menuconfig "$target"
+./edf kernel-saveconfig "$target"
+./edf rootfs-menuconfig "$target"
+./edf linux "$target"
+```
+
+Inside the selected target shell, the equivalent commands are:
+
+```sh
+edf-build kernel-menuconfig
+edf-build kernel-saveconfig
+edf-build rootfs-menuconfig
+edf-build linux
+```
+
+Kernel configuration uses Kconfig in tmux. Save/exit, then `kernel-saveconfig`
+preserves a target-specific fragment. RootFS configuration is the project's
+package/image-feature editor, not PetaLinux's full catalog. Both save under the
+selected build directory's `conf/`. SDK generation remains a separate step.
+
+QEMU is implemented only for the AMD targets:
+
+```sh
+./edf qemu-prepare zc702    # or zcu111; stage only
+./edf qemu zc702            # or zcu111; stage and launch
+# Inside the matching target shell: edf-build qemu
+```
+
+The helper merges firmware/Linux QEMU settings and inserts `boot.bin` into a
+separate SD image copy. It leaves deploy inputs unchanged and uses snapshot mode
+to discard guest writes. Exit with **Ctrl+A, then X**. SLIRP networking needs no
+privileged container; no guest SSH port is published to macOS. QEMU does not
+validate RF converters, PL logic or physical-board initialization.
+
+| Log | Location |
+| --- | --- |
+| Host `boot`, `linux`, `sdk`, `check`, `export` | `validation/<target>-<command>.log`, overwritten on rerun |
+| Source sync | `validation/<target>-source-sync.log` |
+| Interactive commands | `artifacts/logs/<target>/`, unique terminal transcripts |
+| Individual Yocto tasks | Selected build tree, under `tmp/work/.../temp/` |
+| QEMU console | Selected build tree's `qemu-console.log` |
+
+For host `./edf boot|linux|sdk|check|export`, Ctrl+C stops/removes that invocation's
+container, allowing up to 20 seconds before forced termination. Wait for the
+launcher to return before restarting the same target. A canceled command exits
+130; other target containers and persistent data remain. Rerun to resume.
+
+Inside an interactive shell, Ctrl+C reaches the foreground command. BitBake can
+wait for active tasks before returning to the prompt; this does not use the
+host launcher's 20-second stop policy. Use `exit` to leave the shell. Ctrl+C in
+`tail -f` or `docker stats` only stops monitoring. Helpers take per-target locks;
+direct BitBake commands bypass them.
+
+## Exported artifacts
+
+Run `./edf export TARGET` or `edf-build export` after the required builds. Export
+collects existing results; it does not build recipes or flash a device. It takes
+the target lock, so finish any manual BitBake work first.
+
+Exports are published atomically into `artifacts/<target>/<UTC-timestamp>-<id>/`.
+Existing exports are not overwritten. The table lists export names, which may
+differ from upstream deployment filenames.
+
+| Artifact | ZC702 / ARM32 | ZCU111 / ARM64 | Discovery Kit / RISC-V 64-bit |
+| --- | --- | --- | --- |
+| Complete SD disk image | `sdcard.wic.xz` | `sdcard.wic.xz` | `sdcard.wic.gz` |
+| Boot payload | `boot.bin` | `boot.bin` | `payload.bin`, `boot.scr`; optional U-Boot files and `uboot.env` when present |
+| Kernel / device tree | `uImage`, `system.dtb` | `Image`, `system.dtb` | `fitImage`; standalone `mpfs-disco-kit.dtb` when present |
+| Root filesystem archive | `rootfs.tar.gz` | `rootfs.tar.gz` | `rootfs.tar.gz` |
+| Block map | `sdcard.wic.bmap` | `sdcard.wic.bmap` | `sdcard.wic.bmap` |
+| Partition listing | `partitions.txt` | `partitions.txt` | Not separately exported |
+| Metadata / checksums | `packages.manifest`, `source-manifest.xml`, `build-info.json`, `README.txt`, `SHA256SUMS` | Same | Same |
+| Optional SDK | Matching files in `sdk/` | Matching files in `sdk/` | Matching files in `sdk/` |
+
+AMD export stages a copy of the Linux WIC, inserts this board's `boot.bin` into
+FAT partition 1, reads it back for verification, regenerates the block map and
+compresses with xz. Microchip export preserves the vendor WIC layout (FAT boot,
+raw HSS payload, ext4 rootfs), regenerates the block map and compresses with gzip.
+Both check that the original WIC is unchanged. Microchip does not receive AMD
+`boot.bin` insertion.
+
+Verify files from the export directory on macOS:
+
+```sh
+shasum -a 256 -c SHA256SUMS
+```
+
+The WIC is a whole-disk SD image; `rootfs.tar.gz` is only a filesystem archive.
+For a raw-image writer, decompress with `xz -dk sdcard.wic.xz` (AMD) or
+`gzip -dk sdcard.wic.gz` (Microchip), then write the raw WIC to the entire card.
+Linux `bmaptool` can use the compressed image and matching block map. Writing
+overwrites the card; physical boot is a separate validation step.
+
+Allow room for collected files and compressed output, plus an AMD raw staging
+copy. Source manifests record checkout revisions at export, not proof that those
+revisions built every artifact. SDK files are collected if present but are not
+rebuilt or certified current against a later rootfs. Export supports the default
+image recipes above; custom images need explicit integration.
+
+## Reset downloads, caches or all generated data
+
+These commands delete data. Stop this project's containers first, including
+interactive shells and QEMU. No cleanup is performed merely by reading this guide.
+
+```sh
+cd /Volumes/Zeus/workspace/edf-dev
 for id in $(docker --context orbstack ps -aq --filter label=com.docker.compose.project=edf-dev); do
   docker --context orbstack stop -t 20 "$id"
   docker --context orbstack rm "$id"
 done
 docker --context orbstack compose down --remove-orphans
+```
+
+To delete **only downloads and sstate**, shared by all architectures:
+
+```sh
 for volume in edf-dev_downloads edf-dev_sstate-cache; do
   if docker --context orbstack volume inspect "$volume" >/dev/null 2>&1; then
     docker --context orbstack volume rm "$volume"
@@ -104,20 +316,15 @@ for volume in edf-dev_downloads edf-dev_sstate-cache; do
 done
 ```
 
-This deletes every file in `DL_DIR` and `SSTATE_DIR`, including fetched Git
-repositories and cached task archives. Source checkouts, configuration and
-existing build outputs remain in the workspace volume. They can still avoid
-compilation; for a completely fresh start, continue with the full reset.
-
-## Full reset: sources, builds, caches, images and results
-
-Run the preceding stop/cache-removal block first, then:
+Existing source checkouts and build trees can still avoid compilation. For a
+**full reset of all three targets**, also run:
 
 ```sh
-cd ~/workspace/edf-dev
-if docker --context orbstack volume inspect edf-dev_workspace >/dev/null 2>&1; then
-  docker --context orbstack volume rm edf-dev_workspace
-fi
+for volume in edf-dev_workspace edf-dev_microchip-workspace; do
+  if docker --context orbstack volume inspect "$volume" >/dev/null 2>&1; then
+    docker --context orbstack volume rm "$volume"
+  fi
+done
 if docker --context orbstack image inspect edf-dev:ubuntu2204-26.06.1 >/dev/null 2>&1; then
   docker --context orbstack image rm edf-dev:ubuntu2204-26.06.1
 fi
@@ -125,144 +332,21 @@ rm -rf ./artifacts ./validation
 mkdir -p artifacts validation
 ```
 
-This removes source repositories, both build trees, their saved kernel/rootfs
-settings, SDKs, QEMU disks, image exports and validation logs. Preserve any desired
-customizations outside these locations before a future reset. Setup source files,
-scripts, test source code and user-supplied `hardware/` inputs are retained.
-Follow the manual sequence above to recreate everything. `validate` initializes
-the volumes and `sync` downloads the repositories again.
+This removes sources, all build trees and saved build configuration, SDKs, staged
+QEMU disks, exports and logs. Preserve wanted changes outside those locations.
+Tracked project files, tests and `hardware/` inputs are retained. The separate
+`edf-dev-recovery-20261005` directory is not touched by these commands.
 
-Docker's image-layer cache is separate from Yocto's shared-state cache.
-`--no-cache` bypasses image-layer reuse; avoid global Docker pruning, which can
-affect unrelated projects.
-
-Historical automatic clean runs used separate `edf-dev-clean-<timestamp>_*`
-volumes and images. Those existing run volumes/images have been removed for this
-manual restart. Regular Compose reset commands cover only the `edf-dev` project.
-Do not invoke `scripts/clean-validate.py` for the manual procedure: that script
-starts a separate automatic ZC702 validation run with its own storage.
-
-## Targets and shared storage
-
-| Target | Board firmware machine | Linux image machine | Build directory inside container |
-| --- | --- | --- | --- |
-| `zc702` | `zynq-zc702-sdt-full` | `amd-cortexa9thf-neon-common` (ARM32) | `/home/amd-edf/edf/builds/zc702` |
-| `zcu111` | `zynqmp-zcu111-sdt-full` | `amd-cortexa53-common` (ARM64) | `/home/amd-edf/edf/builds/zcu111` |
-
-Both targets have explicit board/common-machine mappings.
-To add a target, extend `config/targets.sh` and the
-launcher's target allowlist with the appropriate board/common-machine mapping.
-Both targets use the same EDF source release and host image.
-
-The host container runs **linux/amd64**, using OrbStack/Rosetta on Apple Silicon.
-Target architecture is selected by Yocto's MACHINE; this setup does not yet
-qualify a native ARM64 host image. The multilib dependencies in the Dockerfile
-are specifically for the x86-64 host.
-
-Compose owns three persistent Linux-filesystem volumes:
-
-- `edf-dev_workspace`: pinned source repositories and isolated target builds.
-- `edf-dev_downloads`: shared fetched sources (`DL_DIR`).
-- `edf-dev_sstate-cache`: shared task results (`SSTATE_DIR`).
-
-Yocto's task signatures and architecture metadata control cache reuse. Sharing
-sstate does not mean ARM32 binaries are used in an ARM64 image. Never share a
-`TMPDIR` between simultaneous target builds. The wrapper uses per-target locks
-and prevents source sync while wrapped builds are active. Interactive/manual
-BitBake commands bypass those wrapper locks and must be coordinated manually.
-Four build/parse workers and `-j4` are configured per target; concurrent targets
-multiply resource use. Different EDF releases should get their own source trees.
-
-The macOS `artifacts/` directory is `/artifacts` in the container. Export final
-images explicitly from the target's `tmp/deploy/images/` into that directory.
-`hardware/` is mounted read-only at `/hardware` for future custom hardware.
-Container removal keeps all volumes. `docker compose down -v` deletes them.
-
-## Interactive build workflow
-
-Enter a shell for the desired target on your Mac:
-
-```sh
-cd ~/workspace/edf-dev
-./edf shell zcu111
-# Or: ./edf shell zc702
-```
-
-Then run commands inside that same container:
-
-```sh
-edf-build help
-edf-build boot
-edf-build linux
-edf-build sdk       # optional separate SDK build
-edf-build qemu      # requires completed firmware and Linux builds
-```
-
-The prompt shows the selected target. Each command initializes the required
-Yocto environment in a child process; no manual environment sourcing is needed.
-Existing target/source locks still apply. Use separate target shells when needed.
-`edf-build check` performs dry runs; `edf-build qemu-prepare` only stages QEMU.
-
-Ctrl+C goes to the foreground command; wait for it to finish handling the
-interrupt and return to the same shell. BitBake may wait for active tasks, and a
-hung compiler may still require explicit recovery. The interactive workflow does
-not use the host launcher's 20-second container-stop policy. For QEMU, use Ctrl+A,
-then X. Use `exit` to leave the container shell.
-
-Console sessions are recorded under `artifacts/logs/<target>/` on the Mac, with
-unique timestamped filenames. These are terminal transcripts and can contain
-terminal control characters. Task-level logs remain in the target's Yocto build
-tree. Commands return their exit status, so `edf-build boot && edf-build linux`
-only proceeds if firmware succeeds. Builds do not start automatically on entry.
-
-These helpers are bind-mounted, so no container-image rebuild is needed. Open a
-new `./edf shell` to get the updated startup configuration. In an already-open
-shell, run `source /opt/edf-scripts/shell-rc.sh` to enable the command and prompt.
-Use a different fresh shell for SDK application development; do not mix a sourced
-SDK environment with BitBake. Existing host-side `./edf boot|linux|sdk` commands
-remain available for unattended use.
-
-## Interactive and configuration commands
-
-```sh
-./edf shell zc702
-# In that shell:
-source /opt/edf-scripts/yocto-env.sh
-# BOARD_MACHINE, LINUX_MACHINE and BUILDDIR now identify the selected target.
-```
-
-```sh
-./edf kernel-menuconfig zc702
-./edf kernel-saveconfig zc702
-./edf rootfs-menuconfig zc702
-./edf linux zc702
-./edf sdk zc702
-```
-
-Kernel configuration uses native Kconfig in tmux. Save/exit, then use
-`kernel-saveconfig` to preserve changes as a target-specific kernel fragment.
-RootFS configuration is our package/image-feature editor, not PetaLinux's full
-package catalog. SDK generation is separate from the Linux image build; the
-SDK's default host is x86-64 Linux, with the selected target architecture.
-Configuration files stay in the selected build directory's `conf/`.
-
-## QEMU
-
-```sh
-./edf qemu-prepare zc702
-./edf qemu zc702
-```
-
-Build both firmware and Linux first. The helper merges their generated QEMU
-settings and inserts BOOT.BIN into a separate SD image copy. It never modifies
-the deploy input images. A new staged copy is prepared each launch; snapshot
-mode discards guest writes. Exit with **Ctrl+A, then X**. Console output is saved
-in the target's `qemu-console.log`. SLIRP networking needs no privileged
-container, and no guest SSH port is published onto macOS. QEMU tests the
-processor/Linux path, not RF converters, PL behavior, or physical initialization.
+Then repeat setup and sync for the vendors you need. To rebuild the host image
+without Docker layer reuse, run the no-cache command in maintenance below.
+Avoid global Docker pruning, which can affect unrelated projects. The legacy
+`scripts/clean-validate.py` launches a separate automatic ZC702 validation run;
+it is not the manual reset procedure for this three-target environment.
 
 ## Future custom layer and bitstream integration
 
+This section describes future AMD/Arty work. The general layer workflow also
+applies to Microchip, but the EDF image and XSA/bitstream examples are AMD-specific.
 This section describes future work. The layer mount, custom image, Arty target,
 and PL firmware recipes are not currently implemented. Apply these steps after
 active builds finish; adding this documentation does not change the build.
@@ -272,7 +356,7 @@ active builds finish; adding this documentation does not change the build.
 Store your layer on the Mac and keep it in Git:
 
 ```text
-~/workspace/edf-dev/layers/meta-myproject/
+/Volumes/Zeus/workspace/edf-dev/layers/meta-myproject/
 ├── conf/layer.conf
 ├── conf/machine/
 ├── recipes-apps/
@@ -302,7 +386,7 @@ bitbake-layers show-layers
 ```
 
 Create the layer only once. Repeat initialization and `add-layer` for each other
-target that needs it, including ZCU111; each build directory owns a separate
+target that needs it, including ZCU111 or Discovery Kit; each build directory owns a separate
 `conf/bblayers.conf`. A full workspace reset requires registering the preserved
 layer again. Board-specific recipes and configuration must be scoped to the
 appropriate machine rather than applied to every target using the layer.
@@ -326,7 +410,8 @@ From the initialized target shell, build with:
 MACHINE="$LINUX_MACHINE" bitbake myproject-image
 ```
 
-The current `./edf linux` wrapper explicitly builds `edf-linux-disk-image`.
+The current `./edf linux` wrapper selects the target image from `config/targets.sh`:
+`edf-linux-disk-image` for AMD or `mchp-base-image` for Microchip.
 Selecting a custom image through the wrapper requires a later change, as does
 teaching the QEMU preparation helper to locate that image's deploy filenames.
 Do not assume the current QEMU command selects `myproject-image` automatically.
@@ -385,73 +470,6 @@ References:
 - [AMD firmware and overlay recipe class, rel-v2026.1](https://github.com/Xilinx/meta-xilinx/blob/rel-v2026.1/meta-xilinx-core/classes-recipe/dfx_user_dts.bbclass)
 - [Your Arty Z7-20 2021.2 reference project](https://github.com/rklinkhammer/arty-z7-20-2021.2)
 
-## Export binaries and a board-ready SD image
-
-After firmware and Linux builds finish:
-
-```sh
-./edf export zc702
-./edf export zcu111
-```
-
-Inside a target shell, use `edf-build export` instead. No image rebuild is
-needed for this helper. Export takes the target lock and refuses to run while
-another wrapped build, configuration session or QEMU command holds it. It does
-not build recipes or flash devices. Manual BitBake commands bypass these locks;
-finish them before exporting.
-
-Each successful export creates a unique directory on your Mac:
-
-```text
-artifacts/<target>/<UTC-timestamp>-<id>/
-├── boot.bin
-├── system.dtb
-├── uImage or Image
-├── rootfs.tar.gz
-├── sdcard.wic.xz
-├── sdcard.wic.bmap
-├── packages.manifest
-├── partitions.txt
-├── source-manifest.xml
-├── build-info.json
-├── README.txt
-├── SHA256SUMS
-└── sdk/                  # matching SDK installer/metadata, when present
-```
-
-The exporter copies through deployment symlinks to produce self-contained files.
-It copies the standard Linux WIC to temporary Linux storage, inserts this board's
-`boot.bin` into FAT partition 1, reads it back for verification, regenerates the
-block map, and compresses the combined image. The original deploy WIC is hashed
-before and after to confirm it is unchanged. Failed exports do not publish a
-completed directory. Existing successful exports are not overwritten.
-
-`sdcard.wic.xz` is the complete board-specific SD disk image; `rootfs.tar.gz` is
-only a filesystem archive. To use a raw-image writer, decompress the WIC with
-`xz -dk sdcard.wic.xz`, then write the resulting `sdcard.wic` to the entire SD
-card, not into a filesystem on the card. Linux `bmaptool` can write the compressed
-image using the matching regenerated `sdcard.wic.bmap`. Writing an SD image
-overwrites that card. The export helper does not choose a disk or perform writes
-to devices, and physical board boot remains a separate validation step.
-
-Verify exported files on macOS from inside the export directory:
-
-```sh
-shasum -a 256 -c SHA256SUMS
-```
-
-The metadata records selected machines, resolved input paths and hashes, the
-uncompressed SD image hash/size, and SDK filenames. `source-manifest.xml` records
-checkout revisions at export time; it does not certify clean source trees or
-prove those exact revisions were used for every prior build. Existing SDKs are
-collected but not rebuilt or certified current against a later rootfs rebuild.
-The current exporter supports the default `edf-linux-disk-image` artifacts and
-EDF FAT-first-partition SD layout. A future custom image needs explicit support.
-
-Allow disk space for one raw WIC staging copy plus collected files and compressed
-output. Compression uses two threads. Old export directories can be removed
-independently of build volumes and caches.
-
 ## Container provenance and maintenance
 
 - The Dockerfile pins the Ubuntu base by digest.
@@ -461,11 +479,12 @@ independently of build volumes and caches.
   The interactive/build service drops Linux capabilities, enables
   `no-new-privileges`, and has no Docker socket mount.
 - The short root initialization service has only CHOWN capability and changes
-  ownership of the three volume roots.
+  ownership of the four volume roots.
 - `artifacts/container-packages.tsv` records installed package versions;
   `artifacts/container-image.json` records the local image identity.
-- `artifacts/manifest-26.06.1.xml` records the exact source revisions.
-- `artifacts/repo-version.txt` records the source-sync tool version and revision.
+- AMD sync writes `artifacts/manifest-26.06.1.xml` and `artifacts/repo-version.txt`.
+- Microchip sync writes `artifacts/manifest-microchip-2026.04.xml` and
+  `artifacts/repo-version-microchip.txt`.
 
 APT package versions are resolved at build time, so this is **not a byte-for-byte
 reproducible image build**. A package inventory is not an SBOM or a vulnerability
@@ -487,3 +506,18 @@ has not undergone a vulnerability scan or a complete software-supply-chain audit
 - [EDF 26.06.1 platform/recipe matrix](https://edf.docs.amd.com/en/v26.06.1/ref/common-specifications.html)
 - [Release source manifest](https://github.com/Xilinx/yocto-manifests/blob/amd-edf-rel-v26.06.1/default-edf.xml)
 
+
+- [Microchip setup instructions](https://github.com/linux4microchip/meta-mchp/blob/linux4microchip-2026.04/meta-mchp-common/README.md)
+- [Discovery Kit machine](https://github.com/linux4microchip/meta-mchp/blob/linux4microchip-2026.04/meta-mchp-polarfire-soc/meta-mchp-polarfire-soc-bsp/conf/machine/mpfs-disco-kit.conf)
+- [Discovery Kit reference design](https://github.com/polarfire-soc/polarfire-soc-discovery-kit-reference-design)
+
+## Validation scope
+
+The restored environment passed container/filesystem smoke checks. The consistency
+update passed 11 tests plus interactive routing/configuration/cancellation checks
+for all targets. Dispatch tests use mocked upstream initialization and BitBake;
+they do not certify real recipe builds. Upstream
+QEMU regression tests require a synced AMD checkout and were skipped during
+recovery. Earlier source-sync and dry-run results predate that recovery. Full
+board image/SDK builds and physical boot have not been revalidated in the restored
+environment. Capability tables describe implemented commands, not hardware certification.

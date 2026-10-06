@@ -2,7 +2,7 @@
 # Interactive commands execute inside the current container, never launch Docker.
 set -euo pipefail
 usage() {
-  echo 'Usage: edf-build {boot|linux|sdk|check|qemu|qemu-prepare|export|help}'
+  echo 'Usage: edf-build {boot|linux|sdk|check|qemu|qemu-prepare|export|kernel-menuconfig|kernel-saveconfig|rootfs-menuconfig|help}'
   echo "Target: ${EDF_TARGET:-zc702} (selected by ./edf shell TARGET)"
 }
 [[ $# -le 1 ]] || { usage >&2; exit 2; }
@@ -12,6 +12,9 @@ case "${1:-help}" in
   export) helper=/opt/edf-scripts/export.sh; action=export ;;
   qemu) helper=/opt/edf-scripts/qemu.sh; action=boot ;;
   qemu-prepare) helper=/opt/edf-scripts/qemu.sh; action=prepare ;;
+  kernel-menuconfig|linux-menuconfig) helper=/opt/edf-scripts/configure.sh; action=kernel ;;
+  kernel-saveconfig) helper=/opt/edf-scripts/configure.sh; action=save-kernel ;;
+  rootfs-menuconfig) helper=/opt/edf-scripts/configure.sh; action=rootfs ;;
   *) usage >&2; exit 2 ;;
 esac
 source /opt/edf-config/targets.sh

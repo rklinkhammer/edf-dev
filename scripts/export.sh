@@ -9,4 +9,7 @@ exec 9>"$root/builds/$EDF_TARGET/.edf-build.lock"
 flock -n 9 || { echo 'Another command is using this target build directory.' >&2; exit 1; }
 # Initialize tools only after taking the lock; do not run BitBake or build recipes.
 source /opt/edf-scripts/yocto-env.sh >/dev/null
+if [[ $EDF_VENDOR == microchip ]]; then
+  exec python3 /opt/edf-scripts/export-microchip.py "$BUILDDIR"
+fi
 exec python3 /opt/edf-scripts/export.py "$BUILDDIR"

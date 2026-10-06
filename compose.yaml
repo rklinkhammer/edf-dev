@@ -6,6 +6,7 @@ x-common: &common
   working_dir: /home/amd-edf/edf
   volumes:
     - workspace:/home/amd-edf/edf
+    - microchip-workspace:/home/amd-edf/microchip
     - downloads:/home/amd-edf/edf/downloads
     - sstate-cache:/home/amd-edf/edf/sstate-cache
     - ./scripts:/opt/edf-scripts:ro
@@ -20,7 +21,7 @@ services:
     user: "0:0"
     cap_add: [CHOWN]
     entrypoint: ["/bin/bash", "-ec"]
-    command: ['chown 1000:1000 /home/amd-edf/edf /home/amd-edf/edf/downloads /home/amd-edf/edf/sstate-cache']
+    command: ['chown 1000:1000 /home/amd-edf/edf /home/amd-edf/edf/downloads /home/amd-edf/edf/sstate-cache /home/amd-edf/microchip']
   shell:
     <<: *common
     build:
@@ -36,6 +37,7 @@ services:
     entrypoint: ["/bin/bash"]
     command: ["--noprofile", "--norc", "-i"]
 volumes:
+  microchip-workspace:
   workspace:
   downloads:
   sstate-cache:
