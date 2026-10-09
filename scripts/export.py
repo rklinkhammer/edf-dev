@@ -107,15 +107,16 @@ def main(build):
             (out/'sdk').mkdir()
             for src in sdks:
                 shutil.copy2(src, out/'sdk'/src.name)
-        root = Path('/home/amd-edf/edf')
-        run(sys.executable, root/'.repo/repo/repo', 'manifest','-r','-o',out/'source-manifest.xml',cwd=root)
+        root = Path('/opt/edf')
+        shutil.copy2(root/'source-manifest.xml', out/'source-manifest.xml')
+        shutil.copy2('/usr/local/share/edf-dev/packages.tsv', out/'container-packages.tsv')
         info = {'target':target, 'board_machine':board, 'linux_machine':linux,
                 'exported_utc':stamp, 'image_name':ic['image_name'],
                 'firmware_config':str((bp/f'BOOT-{board}.qemuboot.conf').resolve()),
                 'inputs':records, 'original_wic':{'source':str(disk),'sha256':original_hash},
                 'sdcard_wic_sha256':raw_hash, 'sdcard_wic_bytes':staged.stat().st_size,
                 'sdk_files':[p.name for p in sdks],
-                'source_manifest_scope':'Current checkout revisions at export; not proof of clean source state at build time.',
+                'source_manifest_scope':'Pinned container source revisions; not an attestation of every fetched recipe input.',
                 'verification':'Firmware read-back, source WIC unchanged, compressed stream integrity; physical boot not tested.'}
         (out/'build-info.json').write_text(json.dumps(info,indent=2)+'\n')
         (out/'README.txt').write_text(f'''{target} SD-card export
@@ -126,12 +127,12 @@ Alternatively, Linux bmaptool can copy sdcard.wic.xz using sdcard.wic.bmap.
 rootfs.tar.gz is a filesystem archive, not a bootable disk image.
 SHA256SUMS checks exported files; build-info.json also records the uncompressed disk hash.
 Physical-board boot has not been verified by this exporter. No device was flashed.
-Source manifest records checkout revisions at export, not an attested build provenance.
+Source manifest records pinned container sources, not an attestation of every fetched recipe input.
 ''')
         hashes = [f'{digest(p)}  {p.relative_to(out)}\n' for p in sorted(out.rglob('*')) if p.is_file()]
         (out/'SHA256SUMS').write_text(''.join(hashes))
         out.rename(final)
-    print(f'Export complete: {final}\nMac: ~/workspace/edf-dev/artifacts/{target}/{final.name}',flush=True)
+    print(f'Export complete: {final}\nContainer: /artifacts/{target}/{final.name}',flush=True)
 
 
 if __name__ == '__main__':

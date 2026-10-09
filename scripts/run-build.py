@@ -8,12 +8,12 @@ import sys
 import threading
 import uuid
 
-DOCKER = ['docker', '--context', 'orbstack']
+DOCKER = ['docker'] + (['--context', os.environ['EDF_DOCKER_CONTEXT']] if os.environ.get('EDF_DOCKER_CONTEXT') else [])
 
 
 def main():
-    action, target = sys.argv[1:]
-    name = f'edf-dev-{target}-{action}-{uuid.uuid4().hex[:12]}'
+    target, *arguments = sys.argv[1:]
+    name = f'edf-dev-next-{target}-{uuid.uuid4().hex[:12]}'
     interrupted = 0
 
     def cancel(signum, frame):
@@ -44,14 +44,17 @@ def main():
         # No --rm: retain exit status until docker wait has consumed it.
         # Finish creation before handling cancellation so cleanup cannot race it.
         created = start(['compose', 'run', '-d', '--no-deps', '-T', '--name', name,
-                         'shell', '/opt/edf-scripts/export.sh' if action == 'export' else '/opt/edf-scripts/build.sh', action],
+                         'shell', '/opt/edf-scripts/build.sh', *arguments],
                         stdout=subprocess.PIPE)
         _, _ = created.communicate()
         if created.returncode:
             return created.returncode
         if interrupted:
             return 128 + interrupted
-        logpath = Path('validation') / f'{target}-{action}.log'
+        logdir = Path(os.environ.get('EDF_ARTIFACTS', 'artifacts')) / 'logs' / target
+        logdir.mkdir(parents=True, exist_ok=True)
+        logpath = logdir / f'{name}.log'
+        print(f'Build log: {logpath}', flush=True)
         with logpath.open('wb') as log:
             logs = start(['logs', '--follow', name], stdout=subprocess.PIPE,
                          stderr=subprocess.STDOUT)

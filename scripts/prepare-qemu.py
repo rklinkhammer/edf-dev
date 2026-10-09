@@ -60,8 +60,8 @@ def main(build):
     require(qemubin / b['qb_system_name'], 'Inside ./edf shell, source /opt/edf-scripts/yocto-env.sh and run: MACHINE=$BOARD_MACHINE bitbake qemu-helper-native')
     require(native / 'usr/bin/mcopy', 'Run ./edf linux to populate its native sysroot.')
     require(native / 'usr/sbin/parted', 'Run ./edf linux to populate its native sysroot.')
-    tool = Path('/home/amd-edf/edf/sources/meta-xilinx/meta-xilinx-core/scripts/qemuboot-tool')
-    require(tool, 'Synchronize the EDF sources first.')
+    tool = Path('/opt/edf/sources/meta-xilinx/meta-xilinx-core/scripts/qemuboot-tool')
+    require(tool, 'Rebuild the source-pinned EDF container.')
     merged = merge_configs(tool, bootconf, imageconf)
     stage = deploy / f'{target}-qemu'
     stage.mkdir(exist_ok=True)

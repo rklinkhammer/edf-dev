@@ -1,43 +1,59 @@
-name: edf-dev
+name: edf-dev-next
 x-common: &common
-  image: edf-dev:ubuntu2204-26.06.1
-  pull_policy: never
+  build: .
+  image: edf-dev-next:26.06.1
   platform: linux/amd64
-  working_dir: /home/amd-edf/edf
-  volumes:
-    - workspace:/home/amd-edf/edf
-    - microchip-workspace:/home/amd-edf/microchip
-    - downloads:/home/amd-edf/edf/downloads
-    - sstate-cache:/home/amd-edf/edf/sstate-cache
-    - ./scripts:/opt/edf-scripts:ro
-    - ./config:/opt/edf-config:ro
-    - ./hardware:/hardware:ro
-    - ./artifacts:/artifacts
+  init: true
   security_opt: [no-new-privileges:true]
   cap_drop: [ALL]
+  cap_add: [CHOWN, FOWNER, SETUID, SETGID, KILL]
+  environment: &identity
+    HOST_UID: ${HOST_UID:?Use ./edf}
+    HOST_GID: ${HOST_GID:?Use ./edf}
+    HOST_GROUPS: ${HOST_GROUPS:?Use ./edf}
 services:
-  init:
+  hashserv:
     <<: *common
-    user: "0:0"
-    cap_add: [CHOWN]
-    entrypoint: ["/bin/bash", "-ec"]
-    command: ['chown 1000:1000 /home/amd-edf/edf /home/amd-edf/edf/downloads /home/amd-edf/edf/sstate-cache /home/amd-edf/microchip']
+    restart: unless-stopped
+    working_dir: /hashserv
+    command: [/opt/edf/sources/poky/bitbake/bin/bitbake-hashserv, --bind, 'unix:///hashserv/hashserv.sock', --database, /hashserv/hashserv.db]
+    volumes:
+      - hashserv:/hashserv
+    healthcheck:
+      test: [CMD, /usr/local/bin/container-entrypoint, python3, -c, "import sys; sys.path.insert(0, '/opt/edf/sources/poky/bitbake/lib'); import hashserv; c=hashserv.create_client('unix:///hashserv/hashserv.sock'); c.get_stats(); c.close()"]
+      interval: 5s
+      timeout: 5s
+      retries: 12
+      start_period: 5s
   shell:
     <<: *common
-    build:
-      context: .
-      dockerfile: Dockerfile
-    user: "1000:1000"
-    init: true
-    stdin_open: true
-    tty: true
+    working_dir: /project
+    cpus: ${EDF_CPUS:-4}
+    mem_limit: ${EDF_MEMORY:-12g}
     environment:
-      GIT_CONFIG_GLOBAL: /home/amd-edf/edf/gitconfig
+      <<: *identity
       EDF_TARGET: ${EDF_TARGET:-zc702}
-    entrypoint: ["/bin/bash"]
-    command: ["--noprofile", "--norc", "-i"]
+    depends_on:
+      hashserv: {condition: service_healthy}
+    volumes:
+      - .:/project:ro
+      - ${EDF_BUILD_ROOT:-build-state}:/home/amd-edf/edf
+      - type: bind
+        source: ${EDF_DOWNLOADS:-./downloads}
+        target: /home/amd-edf/edf/downloads
+        bind: {create_host_path: false}
+      - type: bind
+        source: ${EDF_SSTATE:-./sstate-cache}
+        target: /home/amd-edf/edf/sstate-cache
+        bind: {create_host_path: false}
+      - ./scripts:/opt/edf-scripts:ro
+      - ./config:/opt/edf-config:ro
+      - ./hardware:/hardware:ro
+      - type: bind
+        source: ${EDF_ARTIFACTS:-./artifacts}
+        target: /artifacts
+        bind: {create_host_path: false}
+      - hashserv:/hashserv:ro
 volumes:
-  microchip-workspace:
-  workspace:
-  downloads:
-  sstate-cache:
+  build-state:
+  hashserv:
