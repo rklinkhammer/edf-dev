@@ -1,39 +1,29 @@
-#!/bin/bash
+#!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "$0")"
-dc() { docker --context orbstack compose "$@"; }
-command=${1:-shell}
-export EDF_TARGET=${2:-zc702}
-case "$EDF_TARGET" in zc702|zcu111|mpfs-disco-kit) ;; *) echo "Unknown target: $EDF_TARGET" >&2; exit 2;; esac
-[[ $# -le 2 ]] || { echo 'Usage: ./edf COMMAND [zc702|zcu111|mpfs-disco-kit]' >&2; exit 2; }
-mkdir -p validation artifacts
-case "$command" in
-  build-container)
-    dc build --pull shell 2>&1 | tee validation/container-build.log
-    dc run --rm --no-deps -T shell -c 'cat /usr/local/share/edf-dev/packages.tsv' > artifacts/container-packages.tsv
-    docker --context orbstack image inspect edf-dev:ubuntu2204-26.06.1 > artifacts/container-image.json ;;
-  init) dc run --rm --no-deps -T init ;;
-  validate)
-    dc config --quiet
-    dc run --rm --no-deps -T init
-    dc run --rm --no-deps -T shell /opt/edf-scripts/validate.sh 2>&1 | tee validation/container-check.log ;;
-  sync)
-    dc run --rm --no-deps -T init
-    dc run --rm --no-deps -T shell /opt/edf-scripts/sync.sh 2>&1 | tee "validation/$EDF_TARGET-source-sync.log" ;;
-  shell)
-    dc run --rm --no-deps -T init
-    dc run --rm --no-deps shell --noprofile --rcfile /opt/edf-scripts/shell-rc.sh -i ;;
-  boot|linux|sdk|check|export)
-    python3 scripts/run-build.py "$command" "$EDF_TARGET" ;;
-  qemu|qemu-prepare)
-    mode=boot; [[ $command != qemu-prepare ]] || mode=prepare
-    dc run --rm --no-deps shell /opt/edf-scripts/qemu.sh "$mode" ;;
-  kernel-menuconfig|linux-menuconfig)
-    dc run --rm --no-deps shell /opt/edf-scripts/configure.sh kernel ;;
-  kernel-saveconfig)
-    dc run --rm --no-deps -T shell /opt/edf-scripts/configure.sh save-kernel ;;
-  rootfs-menuconfig)
-    dc run --rm --no-deps shell /opt/edf-scripts/configure.sh rootfs ;;
-  config) dc config ;;
-  *) echo 'Usage: ./edf {build-container|init|validate|sync|shell|boot|linux|sdk|check|export|qemu|qemu-prepare|kernel-menuconfig|kernel-saveconfig|rootfs-menuconfig|config} [zc702|zcu111|mpfs-disco-kit]' >&2; exit 2 ;;
+export HOST_UID=$(id -u) HOST_GID=$(id -g)
+export HOST_GROUPS=$(id -G | tr ' ' ',')
+[[ $HOST_UID != 0 ]] || { echo 'Run as your normal user.' >&2; exit 2; }
+export EDF_TARGET=${EDF_TARGET:-zc702}
+if [[ ${1:-} == --target ]]; then export EDF_TARGET=${2:?Specify target}; shift 2; fi
+[[ $EDF_TARGET =~ ^[a-z0-9-]+$ && -f config/targets/$EDF_TARGET.sh ]] || {
+  echo "Unsupported target: $EDF_TARGET; PolarFire remains in the original environment." >&2; exit 2;
+}
+dc() { docker ${EDF_DOCKER_CONTEXT:+--context "$EDF_DOCKER_CONTEXT"} compose "$@"; }
+case "${1:-image}" in
+  config) exec docker ${EDF_DOCKER_CONTEXT:+--context "$EDF_DOCKER_CONTEXT"} compose config ;;
+  build-container) dc build shell; exit ;;
+  stop) dc down; exit ;;
+  help|--help|-h)
+    echo 'Usage: ./edf [--target zc702|zcu111|arty-z7-20] [image|boot|linux|sdk|check|validate|shell|export|qemu|qemu-prepare|BITBAKE_ARGS...]'
+    echo 'EDF_DOCKER_CONTEXT=orbstack selects OrbStack; default uses the current Docker context.'
+    exit ;;
+esac
+# Bind source directories must exist with invoking-user ownership, never root-owned fallback directories.
+resolved_artifacts=$(python3 scripts/host-config.py)
+export EDF_ARTIFACTS="$resolved_artifacts"
+dc up -d --build --wait hashserv
+case "${1:-image}" in
+  shell|qemu|qemu-prepare) exec docker ${EDF_DOCKER_CONTEXT:+--context "$EDF_DOCKER_CONTEXT"} compose run --rm --no-deps shell /opt/edf-scripts/build.sh "$@" ;;
+  *) exec python3 scripts/run-build.py "$EDF_TARGET" "${@:-image}" ;;
 esac

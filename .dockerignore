@@ -1,2 +1,8 @@
-*
-!Dockerfile
+.git
+artifacts
+validation
+hardware
+downloads
+sstate-cache
+tests
+__pycache__

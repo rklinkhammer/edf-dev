@@ -1,0 +1,45 @@
+EDF replacement validation notes, 2026-10-08
+
+Replacement: /Volumes/Zeus/workspace/edf-dev-next
+Branch: simplify-nfs-hashserv
+Original: /Volumes/Zeus/workspace/edf-dev; unchanged.
+Base EDF commit: 5df10cd53900ab71081a8caa2df8a9e27f35a88d
+Jetson comparison: 6213f0e8b0629a4882ae128114a2e3efb644bb60
+AMD manifest commit: db9ad19553f9acdd5dfc92228e5a0ca10de760db
+Legacy Arty design reference: dvrz commit 1079252b6ec1d493b6ffdbf6fdd50e59788761d0
+
+Implemented:
+- Pinned AMD EDF 26.06.1 / Scarthgap sources inside the build image.
+- Runtime numeric UID/GID and supplementary-group mapping.
+- Read-only project inputs; NFS-capable downloads, sstate and artifact bind mounts.
+- Local Linux build volume and per-target build locks.
+- Local Scarthgap hash server, Unix socket, health gate, SQLite persistence.
+- OEEquivHash; no upstream hash server or remote sstate mirror.
+- Declarative target definitions, checked-in policy and stable generated configuration.
+- Four container CPUs, 12 GiB RAM, two BitBake workers; retained disk guards.
+- Managed cancellation, exit status and persistent logs.
+- Retained verified export and QEMU transformations.
+- Arty selector guarded pending its generated EDF/SDT machine configuration.
+
+Confirmed:
+- Container image build.
+- Caller UID 501, GID 20, supplementary groups, writable storage and read-only inputs.
+- Alternative UID 12345/GID 12346 plus supplementary GID 20; baked-source Git access.
+- Hash report/query and persistence after server restart.
+- Native C compile/run and UTF-8 locale.
+- Effective firmware and common Linux machines, hash settings and TMPDIR for both AMD targets.
+- Seven unit/integration tests with no skips, including real Docker cancellation and lock release.
+- Generated configuration keeps timestamps when unchanged.
+- Compose .env artifact path resolution.
+- ZC702 final dependency dry runs: firmware 2937 tasks; Linux image 9107 tasks; CLI exit 0.
+
+ZCU111 final dependency dry runs: firmware 4231 tasks; Linux image 12100 tasks; CLI exit 0.
+Both final target checks completed without warnings or errors.
+
+Limits:
+- Dependency dry runs are not image compilation or board certification.
+- Fresh board image/SDK compilation, export of fresh images and hardware boot are unverified.
+- No actual external NFS server was qualified; configure its paths/permissions and run validate there.
+- dvrz is sufficient as the legacy board reference. Its EDF/SDT conversion remains future work.
+- PolarFire stays in the original environment; the replacement is currently AMD-only.
+- Original sources, images, volumes and build state were not migrated or deleted.

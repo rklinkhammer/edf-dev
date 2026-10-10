@@ -20,9 +20,19 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && dpkg-query -W -f='${Package}\t${Version}\t${Architecture}\n' \
        > /usr/local/share/edf-dev/packages.tsv \
     && rm -rf /var/lib/apt/lists/*
-# Permit volume initialization to traverse the home without DAC_OVERRIDE.
-RUN chmod 0755 /home/amd-edf
-ENV LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8
+RUN apt-get update && apt-get install -y --no-install-recommends util-linux && rm -rf /var/lib/apt/lists/*
+RUN chmod 0755 /home/amd-edf && install -d -o 1000 -g 1000 /opt/edf
 USER 1000:1000
-WORKDIR /home/amd-edf/edf
-CMD ["/bin/bash", "--noprofile", "--norc", "-i"]
+WORKDIR /opt/edf
+COPY config/sources.lock.xml /tmp/edf-manifest.xml
+RUN git config --global user.name "EDF container" && git config --global user.email "edf@localhost" && repo init -u https://github.com/Xilinx/yocto-manifests.git -b db9ad19553f9acdd5dfc92228e5a0ca10de760db -m default-edf.xml --depth=1 \
+    && cmp /tmp/edf-manifest.xml .repo/manifests/default-edf.xml \
+    && repo sync -j4 \
+    && repo manifest -r -o /opt/edf/source-manifest.xml
+USER root
+RUN find /opt/edf -name .git -prune -exec sh -c 'git config --system --add safe.directory "$(dirname "$1")"' sh {} \; && chown -R root:root /opt/edf && chmod -R a+rX /opt/edf
+COPY --chmod=755 container-entrypoint.sh /usr/local/bin/container-entrypoint
+ENV LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8
+WORKDIR /project
+ENTRYPOINT ["/usr/local/bin/container-entrypoint"]
+CMD ["/bin/bash", "/opt/edf-scripts/build.sh", "image"]

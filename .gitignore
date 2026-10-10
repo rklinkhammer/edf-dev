@@ -1,5 +1,9 @@
 artifacts/*
 validation/*
 hardware/*
+!hardware/.gitkeep
+downloads/
+sstate-cache/
+.env
 __pycache__/
 *.pyc
