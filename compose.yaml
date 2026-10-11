@@ -33,6 +33,7 @@ services:
     environment:
       <<: *identity
       EDF_TARGET: ${EDF_TARGET:-zc702}
+      EDF_MACHINE: ${EDF_MACHINE:-linux}
     depends_on:
       hashserv: {condition: service_healthy}
     volumes:

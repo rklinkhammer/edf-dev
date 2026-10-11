@@ -1,5 +1,5 @@
 """Opt-in real Docker cancellation/exit-status regression."""
-import os, pathlib, subprocess, tempfile, signal, unittest, uuid
+import os, pathlib, subprocess, tempfile, signal, unittest, uuid, select, time
 ROOT=pathlib.Path(__file__).resolve().parents[1]
 @unittest.skipUnless(os.environ.get('EDF_RUNTIME_TEST'),'requires built container and Docker')
 class Supervisor(unittest.TestCase):
@@ -8,7 +8,7 @@ class Supervisor(unittest.TestCase):
             project='edf-next-supervisor-test-'+uuid.uuid4().hex[:8]
             work=pathlib.Path(directory)
             script=work/'build.sh'
-            script.write_text('#!/bin/bash\nexec 9>/home/amd-edf/edf/probe.lock\nflock -n 9 || exit 99\nif [[ $1 == fail ]]; then exit 7; fi\necho READY\nexec sleep 120\n')
+            script.write_text('#!/bin/bash\nexec 9>/home/amd-edf/edf/probe.lock\nflock -n 9 || exit 99\nif [[ $1 == fail ]]; then exit 7; fi\nif [[ $1 == progress ]]; then [[ -t 1 ]] || exit 98; printf "PROGRESS 1\\r"; exec sleep 120; fi\necho READY\nexec sleep 120\n')
             script.chmod(0o755)
             override=work/'override.yaml'
             override.write_text('services:\n  shell:\n    volumes:\n      - '+str(script)+':/opt/edf-scripts/build.sh:ro\n')
@@ -26,8 +26,36 @@ class Supervisor(unittest.TestCase):
                 self.assertEqual(p.returncode,130,''.join(output))
                 failure=subprocess.run(['python3',str(ROOT/'scripts/run-build.py'),'zc702','fail'],cwd=ROOT,env=env,capture_output=True,text=True,timeout=40)
                 self.assertEqual(failure.returncode,7,failure.stdout+failure.stderr)
+                # A carriage-return update must reach a terminal before the
+                # container exits or prints a newline (docker logs buffers it).
+                master, slave = os.openpty()
+                terminal = subprocess.Popen(['python3',str(ROOT/'scripts/run-build.py'),'zc702','progress'],
+                                            cwd=ROOT,env=env,stdin=subprocess.DEVNULL,
+                                            stdout=slave,stderr=slave)
+                os.close(slave)
+                received = b''
+                try:
+                    deadline = time.monotonic() + 20
+                    while b'PROGRESS 1\r' not in received and time.monotonic() < deadline:
+                        if select.select([master], [], [], 1)[0]:
+                            try:
+                                chunk = os.read(master, 65536)
+                            except OSError:
+                                break
+                            if not chunk: break
+                            received += chunk
+                    self.assertIn(b'PROGRESS 1\r', received)
+                    self.assertIsNone(terminal.poll(), received)
+                    terminal.send_signal(signal.SIGINT)
+                    self.assertEqual(terminal.wait(timeout=40), 130)
+                finally:
+                    if terminal.poll() is None:
+                        terminal.send_signal(signal.SIGINT)
+                        terminal.wait(timeout=40)
+                    os.close(master)
                 logs=list((work/'logs/zc702').glob('*.log'))
                 self.assertTrue(any('READY' in log.read_text() for log in logs))
+                self.assertTrue(any(b'PROGRESS 1\r' in log.read_bytes() for log in logs))
                 docker=['docker']+(['--context',env['EDF_DOCKER_CONTEXT']] if env['EDF_DOCKER_CONTEXT'] else [])
                 remaining=subprocess.check_output(docker+['ps','-aq','--filter','label=com.docker.compose.project='+project],text=True)
                 self.assertFalse(remaining.strip(),remaining)

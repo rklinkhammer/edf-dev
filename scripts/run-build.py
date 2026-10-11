@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Own a single Compose build container, including terminal cancellation."""
+"""Stream an attached Compose build and own its cancellation and log file."""
 import os
 from pathlib import Path
 import signal
@@ -23,85 +23,77 @@ def main():
     for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGHUP):
         signal.signal(sig, cancel)
 
-    def start(args, **kwargs):
-        # Terminal Ctrl+C belongs to this supervisor, not its Docker clients.
-        return subprocess.Popen(DOCKER + args, start_new_session=True, **kwargs)
+    def docker(*args, **kwargs):
+        return subprocess.run(DOCKER + list(args), start_new_session=True, **kwargs)
 
-    def cleanup():
-        exists = subprocess.run(DOCKER + ['container', 'inspect', name],
-                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
-        if exists.returncode:
-            return True
-        subprocess.run(DOCKER + ['stop', '-t', '20', name],
-                                 stdout=subprocess.DEVNULL, start_new_session=True)
-        removed = subprocess.run(DOCKER + ['rm', '-f', name],
-                                 stdout=subprocess.DEVNULL, start_new_session=True)
-        return removed.returncode == 0
+    logdir = Path(os.environ.get('EDF_ARTIFACTS', 'artifacts')) / 'logs' / target
+    logdir.mkdir(parents=True, exist_ok=True)
+    logpath = logdir / f'{name}.log'
+    print(f'Build log: {logpath}', flush=True)
+    terminal = sys.stdout.isatty()
+    options = ['--no-tty=false' if terminal else '-T', '--interactive=false']
+    if terminal:
+        term = os.environ.get('TERM', 'xterm')
+        size = os.get_terminal_size(sys.stdout.fileno())
+        options += ['-e', 'TERM=' + (term if term and term != 'dumb' else 'xterm'),
+                    '-e', f'COLUMNS={size.columns or 80}', '-e', f'LINES={size.lines or 24}']
 
-    logs = waiter = None
     rc = 1
-    try:
-        # No --rm: retain exit status until docker wait has consumed it.
-        # Finish creation before handling cancellation so cleanup cannot race it.
-        created = start(['compose', 'run', '-d', '--no-deps', '-T', '--name', name,
-                         'shell', '/opt/edf-scripts/build.sh', *arguments],
-                        stdout=subprocess.PIPE)
-        _, _ = created.communicate()
-        if created.returncode:
-            return created.returncode
-        if interrupted:
-            return 128 + interrupted
-        logdir = Path(os.environ.get('EDF_ARTIFACTS', 'artifacts')) / 'logs' / target
-        logdir.mkdir(parents=True, exist_ok=True)
-        logpath = logdir / f'{name}.log'
-        print(f'Build log: {logpath}', flush=True)
-        with logpath.open('wb') as log:
-            logs = start(['logs', '--follow', name], stdout=subprocess.PIPE,
-                         stderr=subprocess.STDOUT)
+    with logpath.open('wb') as log:
+        # Attach from creation: no lost startup output and no Docker log-driver
+        # buffering of BitBake's carriage-return progress updates.
+        process = subprocess.Popen(
+            DOCKER + ['compose', 'run', '--no-deps', *options, '--name', name,
+                      'shell', '/opt/edf-scripts/build.sh', *arguments],
+            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT, start_new_session=True)
 
-            def copy_output():
-                while True:
-                    data = os.read(logs.stdout.fileno(), 65536)
-                    if not data:
-                        break
-                    log.write(data)
-                    log.flush()
-                    try:
-                        sys.stdout.buffer.write(data)
-                        sys.stdout.buffer.flush()
-                    except BrokenPipeError:
-                        pass  # Continue saving logs and managing the container.
-
-            reader = threading.Thread(target=copy_output)
-            reader.start()
-            waiter = start(['wait', name], stdout=subprocess.PIPE)
-            while waiter.poll() is None and not interrupted:
+        def copy_output():
+            while True:
+                data = os.read(process.stdout.fileno(), 65536)
+                if not data:
+                    break
+                log.write(data)
+                log.flush()
                 try:
-                    waiter.wait(timeout=0.2)
+                    sys.stdout.buffer.write(data)
+                    sys.stdout.buffer.flush()
+                except BrokenPipeError:
+                    pass
+
+        reader = threading.Thread(target=copy_output)
+        reader.start()
+        stopping = False
+        try:
+            while process.poll() is None:
+                if interrupted:
+                    if not stopping:
+                        print('\nStopping this build container (up to 20 seconds)…', file=sys.stderr)
+                        stopping = True
+                    # Creation can still be in flight when Ctrl+C arrives.
+                    # Retry until this named container exists or Compose exits.
+                    exists = docker('container', 'inspect', name,
+                                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+                    if exists.returncode == 0:
+                        docker('stop', '-t', '20', name, stdout=subprocess.DEVNULL)
+                try:
+                    process.wait(timeout=0.2)
                 except subprocess.TimeoutExpired:
                     pass
-            if interrupted:
-                print('\nStopping this build container (up to 20 seconds)…', file=sys.stderr)
-                subprocess.run(DOCKER + ['stop', '-t', '20', name],
-                               stdout=subprocess.DEVNULL, start_new_session=True)
-                rc = 128 + interrupted
-            else:
-                value = waiter.communicate()[0].strip()
-                rc = int(value) if waiter.returncode == 0 and value.isdigit() else 1
-            try:
-                logs.wait(timeout=5)
-            except subprocess.TimeoutExpired:
-                logs.terminate()
-                logs.wait()
+            rc = process.returncode
+        finally:
+            if process.poll() is None:
+                process.terminate()
+                process.wait()
+            exists = docker('container', 'inspect', name,
+                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            if exists.returncode == 0:
+                removed = docker('rm', '-f', name, stdout=subprocess.DEVNULL)
+                if removed.returncode:
+                    print(f'Could not remove {name}; inspect it before retrying.', file=sys.stderr)
+                    rc = 1
             reader.join()
-    finally:
-        if not cleanup():
-            print(f'Could not remove {name}; inspect it before retrying.', file=sys.stderr)
-            rc = 1
-        for child in (logs, waiter):
-            if child is not None and child.poll() is None:
-                child.terminate()
-                child.wait()
+            process.stdout.close()
     return 128 + interrupted if interrupted else rc
 
 

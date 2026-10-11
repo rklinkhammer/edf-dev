@@ -5,25 +5,53 @@ export HOST_UID=$(id -u) HOST_GID=$(id -g)
 export HOST_GROUPS=$(id -G | tr ' ' ',')
 [[ $HOST_UID != 0 ]] || { echo 'Run as your normal user.' >&2; exit 2; }
 export EDF_TARGET=${EDF_TARGET:-zc702}
-if [[ ${1:-} == --target ]]; then export EDF_TARGET=${2:?Specify target}; shift 2; fi
+export EDF_MACHINE=${EDF_MACHINE:-linux}
+# Parse only launcher options before the command; BitBake's arguments stay intact.
+while (( $# )); do
+  case "$1" in
+    --target|--machine|--context)
+      [[ $# -ge 2 && -n $2 ]] || { echo "Missing value for $1" >&2; exit 2; }
+      case "$1" in
+        --target) export EDF_TARGET=$2 ;;
+        --machine) export EDF_MACHINE=$2 ;;
+        --context) export EDF_DOCKER_CONTEXT=$2 ;;
+      esac
+      shift 2 ;;
+    --) shift; set -- bitbake "$@"; break ;;
+    *) break ;;
+  esac
+done
 [[ $EDF_TARGET =~ ^[a-z0-9-]+$ && -f config/targets/$EDF_TARGET.sh ]] || {
   echo "Unsupported target: $EDF_TARGET; PolarFire remains in the original environment." >&2; exit 2;
 }
-dc() { docker ${EDF_DOCKER_CONTEXT:+--context "$EDF_DOCKER_CONTEXT"} compose "$@"; }
-case "${1:-image}" in
-  config) exec docker ${EDF_DOCKER_CONTEXT:+--context "$EDF_DOCKER_CONTEXT"} compose config ;;
+[[ $EDF_MACHINE =~ ^[a-zA-Z0-9_-]+$ ]] || { echo "Invalid machine: $EDF_MACHINE" >&2; exit 2; }
+# Explicit EDF context wins; otherwise honor Docker's own environment.
+# macOS defaults to OrbStack. EDF_DOCKER_CONTEXT='' opts into Docker's active context.
+if [[ ! ${EDF_DOCKER_CONTEXT+x} && -z ${DOCKER_CONTEXT:-} && -z ${DOCKER_HOST:-} && $(uname -s) == Darwin ]]; then
+  export EDF_DOCKER_CONTEXT=orbstack
+fi
+docker_cmd=(docker)
+[[ -z ${EDF_DOCKER_CONTEXT:-} ]] || docker_cmd+=(--context "$EDF_DOCKER_CONTEXT")
+dc() { "${docker_cmd[@]}" compose "$@"; }
+(( $# )) || set -- bitbake
+case "$1" in
+  config) dc config; exit ;;
   build-container) dc build shell; exit ;;
   stop) dc down; exit ;;
   help|--help|-h)
-    echo 'Usage: ./edf [--target zc702|zcu111|arty-z7-20] [image|boot|linux|sdk|check|validate|shell|export|qemu|qemu-prepare|BITBAKE_ARGS...]'
-    echo 'EDF_DOCKER_CONTEXT=orbstack selects OrbStack; default uses the current Docker context.'
+    echo 'Usage: ./edf [--target TARGET] [--machine linux|board|MACHINE] [--context CONTEXT] [bitbake] [BITBAKE_ARGS...]'
+    echo 'Default: BitBake builds the selected target image on its Linux machine.'
+    echo 'Convenience commands: image boot linux sdk check validate shell export qemu qemu-prepare'
+    echo 'Container commands: build-container config stop help'
+    echo 'Use bitbake (or --) to bypass command aliases, e.g. ./edf bitbake --help.'
+    echo '--machine applies to direct BitBake and shell; convenience commands keep their target mappings.'
+    echo 'Context: --context > EDF_DOCKER_CONTEXT > Docker environment; otherwise OrbStack on macOS, active context on Linux.'
     exit ;;
 esac
-# Bind source directories must exist with invoking-user ownership, never root-owned fallback directories.
 resolved_artifacts=$(python3 scripts/host-config.py)
 export EDF_ARTIFACTS="$resolved_artifacts"
 dc up -d --build --wait hashserv
-case "${1:-image}" in
-  shell|qemu|qemu-prepare) exec docker ${EDF_DOCKER_CONTEXT:+--context "$EDF_DOCKER_CONTEXT"} compose run --rm --no-deps shell /opt/edf-scripts/build.sh "$@" ;;
-  *) exec python3 scripts/run-build.py "$EDF_TARGET" "${@:-image}" ;;
+case "$1" in
+  shell|qemu|qemu-prepare) exec "${docker_cmd[@]}" compose run --rm --no-deps shell /opt/edf-scripts/build.sh "$@" ;;
+  *) exec python3 scripts/run-build.py "$EDF_TARGET" "$@" ;;
 esac

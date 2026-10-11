@@ -35,4 +35,4 @@ COPY --chmod=755 container-entrypoint.sh /usr/local/bin/container-entrypoint
 ENV LANG=en_US.UTF-8 LC_ALL=en_US.UTF-8
 WORKDIR /project
 ENTRYPOINT ["/usr/local/bin/container-entrypoint"]
-CMD ["/bin/bash", "/opt/edf-scripts/build.sh", "image"]
+CMD ["/bin/bash", "/opt/edf-scripts/build.sh", "bitbake"]

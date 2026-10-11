@@ -43,3 +43,35 @@ Limits:
 - dvrz is sufficient as the legacy board reference. Its EDF/SDT conversion remains future work.
 - PolarFire stays in the original environment; the replacement is currently AMD-only.
 - Original sources, images, volumes and build state were not migrated or deleted.
+
+2026-10-10: BitBake-first CLI update (Linux Docker host)
+- Container built from the existing pinned EDF manifest.
+- 14 tests passed, including real Docker cancellation/exit propagation;
+  two upstream-helper-dependent QEMU tests skipped.
+- Actual `./edf --target TARGET --machine MODE bitbake -e` passed for
+  zc702/zcu111 with both linux/board selection. Effective MACHINE, local
+  TMPDIR and Unix-socket BB_HASHSERVE matched the intended configuration.
+- Launcher tests cover Darwin's OrbStack default, explicit context priority,
+  Docker environment overrides, quoted arguments, alias escape, shell machine
+  inheritance and direct/convenience dispatch.
+- Native macOS/OrbStack execution and full EDF image builds were not run here.
+
+2026-10-10: Apparent parsing hang
+- Reproduced zc702 image's quiet cold-cache parsing; two parser workers used
+  approximately two CPU cores. A diagnostic TTY run showed parsing advance to
+  5%, but Docker buffered carriage-return progress until container shutdown.
+- Kept plain logs and added a notice every 30 seconds without new output.
+- 14 tests passed, two QEMU tests skipped. Real Docker regression covers the
+  quiet-build notice, cancellation, lock release, log saving and failure status.
+- Diagnostic builds were stopped; full recipe parsing/image compilation was
+  not completed during this check. No native macOS test was performed.
+
+2026-10-10: Direct console streaming (supersedes quiet-build notices)
+- Supervisor now streams attached Compose output directly, with a PTY for
+  terminal callers and plain output for redirects. Removed the quiet notices.
+- Real zc702 image command displayed parsing percentages and ETA live before
+  cancellation; container terminal dimensions produce a correctly sized bar.
+- 14 tests passed, two QEMU tests skipped. Docker regression proves a carriage-
+  return-only progress update arrives before exit/newline, is saved in the log,
+  and cancellation still releases the target lock. Exit code 7 is preserved.
+- Diagnostic builds were stopped; no full image build or native macOS test.
