@@ -1,0 +1,39 @@
+Arty Z7-20 / DVRMC integration validation, 2026-10-13
+
+Environment: AMD EDF 26.06.1, pinned container sources; Vivado/SDTGen 2026.1.
+Target: xc7z020clg400-1; hardware bundle fingerprints in
+config/hardware/arty-z7-20.json.
+
+Confirmed:
+- Exported bitstream and fixed XSA from a copy of the implemented DVRMC project.
+  Vivado write_bitstream passed DRC and completed without errors.
+- Generated EDF SDT machine, FSBL domain and full Linux PL overlay with the
+  release's gen-machine-conf -g full.
+- Base Linux tree: 512 MiB RAM, UART0; no PL peripherals or firmware-name.
+- Standalone base/overlay dtc compilation: no warnings.
+- Yocto device-tree build: 957 tasks, all succeeded.
+- Yocto dvrmc-firmware and fpga-manager-script build: 1032 tasks, all succeeded.
+  Final firmware recipe/license metadata rebuild: 857 tasks, all succeeded.
+- Applied packaged DTBO to the actual Yocto base DTB with fdtoverlay.
+  Result: controller_axi at 0x43c00000, size 0x10000;
+  fpga-region firmware-name = dvrmc-firmware.bin.
+- Installed hardware-inputs.json exactly matches the source manifest.
+- Arty xilinx-bootbin build: 2898 tasks, all succeeded.
+  Actual bootgen.bif contains FSBL, U-Boot, cortexa9-linux.dtb and version
+  metadata. There is no bitstream partition.
+- linux-xlnx configure: 769 tasks, all succeeded. Effective .config enables
+  FPGA_MGR_ZYNQ_FPGA, FPGA_BRIDGE, FPGA_REGION, OF_FPGA_REGION, OF_OVERLAY,
+  OF_CONFIGFS, CONFIGFS_FS and XILINX_FCLK, all built in (=y).
+- Linux image dependency dry-run (-n): 9125 planned tasks, no errors.
+  Effective IMAGE_INSTALL includes dvrmc-firmware and fpga-manager-script.
+  This is not a completed root filesystem or WIC build.
+- Repository tests: 21 tests, 18 passed, 3 unrelated opt-in tests skipped.
+
+Local logs and generated inspection artifacts:
+  artifacts/arty-preparation/
+
+Not qualified by these checks:
+- Complete Linux image/SDK build and SD-image export for this new target.
+- Physical SD boot, Ethernet/USB operation, FPGA Manager loading on the board,
+  Linux MMIO/application integration, and H-bridge/motor operation.
+No board was programmed and no motor commands were issued.

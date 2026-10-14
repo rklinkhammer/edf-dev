@@ -9,7 +9,7 @@ Before adopting this replacement:
 1. Validate identity, mounts and hashserv; test socket requests and restart persistence.
 2. Run both AMD targets through dry-run, image/SDK build, verified export and QEMU.
 3. Test Ctrl+C and confirm the per-target lock is available afterward.
-4. Supply and validate the actual Arty machine/hardware inputs, then test physical boot.
+4. Build the Arty DVRMC target with its matched hardware bundle; test physical boot and Linux FPGA Manager loading (see arty.md).
 5. Port PolarFire with its own pinned vendor image/adapter before retiring its old flow.
 
 The old custom rootfs/config menus and mutable source synchronization are removed in this

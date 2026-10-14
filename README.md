@@ -66,6 +66,18 @@ normal plain-text mode. The same output is saved under `artifacts/logs/<target>/
 current build, and the launcher returns its exit status. A cold recipe cache can
 take several minutes to parse.
 
+## Arty Z7-20 and DVRMC
+
+The `arty-z7-20` target builds firmware from the implemented DVRMC hardware
+configuration and installs its bitstream and device-tree overlay in Linux.
+Load it after boot with FPGA Manager; the bitstream is excluded from BOOT.BIN.
+See [Arty build, hardware bundle and Linux loading](docs/arty.md).
+
+```sh
+./edf --target arty-z7-20 image
+./edf --target arty-z7-20 export
+```
+
 ## Docker context and macOS
 
 On macOS, the launcher defaults to `orbstack`. On Linux, it defaults to Docker's
@@ -155,8 +167,8 @@ machines. Exports retain machine matching, firmware insertion into a copied WIC,
 read-back, hashes and timestamped publication. Original WIC files are unchanged.
 QEMU runs with user-mode networking and a disposable snapshot.
 
-Arty Z7-20 is recognized but requires its actual generated custom-board machine
-configuration; see [Arty inputs](docs/arty.md). It never borrows ZC702 firmware.
+Arty Z7-20 uses its generated DVRMC machine configuration and matching hardware
+bundle; see [Arty inputs](docs/arty.md). Physical-board qualification remains pending.
 PolarFire remains supported by the original checkout, not this AMD replacement.
 See [migration](docs/migration.md) before retiring the original environment.
 

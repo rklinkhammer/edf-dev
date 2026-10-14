@@ -75,3 +75,8 @@ Limits:
   return-only progress update arrives before exit/newline, is saved in the log,
   and cancellation still releases the target lock. Exit code 7 is preserved.
 - Diagnostic builds were stopped; no full image build or native macOS test.
+
+Arty integration update, 2026-10-13:
+The earlier Arty placeholder status is superseded by docs/arty-validation.txt.
+The DVRMC SDT machine and Linux FPGA Manager firmware path are implemented;
+physical-board qualification remains pending.
