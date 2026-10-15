@@ -1,0 +1,3 @@
+[submodule "external/dmotor"]
+	path = external/dmotor
+	url = https://github.com/rklinkhammer/dmotor.git
