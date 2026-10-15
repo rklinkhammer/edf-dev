@@ -17,6 +17,8 @@ class Launcher(unittest.TestCase):
         for name in ('bin', 'scripts', 'config/targets', 'artifacts'):
             (self.root / name).mkdir(parents=True)
         (self.root / 'edf').write_text((ROOT / 'edf').read_text())
+        (self.root / 'scripts/hardware-lock.py').write_text((ROOT / 'scripts/hardware-lock.py').read_text())
+        (self.root / 'scripts/stage-dmotor.py').write_text('pass\n')
         (self.root / 'config/targets/zc702.sh').touch()
         (self.root / 'scripts/host-config.py').write_text("import os; print(os.path.join(os.getcwd(), 'artifacts'))\n")
         (self.root / 'scripts/run-build.py').write_text(

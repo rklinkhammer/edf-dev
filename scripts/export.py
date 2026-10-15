@@ -11,6 +11,7 @@ import signal
 import subprocess
 import sys
 import tempfile
+import tarfile
 import uuid
 
 
@@ -74,6 +75,24 @@ def main(build):
         raise RuntimeError('Insufficient Linux workspace space for SD image staging.')
     with tempfile.TemporaryDirectory(prefix='.export-', dir=parent) as output, tempfile.TemporaryDirectory(prefix='export-', dir=build/'tmp') as work:
         out, work = Path(output), Path(work)
+        software_identity = None
+        hardware_identity = None
+        if target == 'arty-z7-20':
+            # Read the actual built filesystem, never the current source checkout.
+            wanted = {'usr/share/dmotor/source-version.json': 'dmotor-source-version.json',
+                      'lib/firmware/xilinx/dvrmc-firmware/hardware-inputs.json': 'dvrmc-hardware-inputs.json',
+                      'usr/lib/firmware/xilinx/dvrmc-firmware/hardware-inputs.json': 'dvrmc-hardware-inputs.json'}
+            with tarfile.open(inputs['rootfs.tar.gz'], 'r|gz') as archive:
+                for member in archive:
+                    name = member.name.removeprefix('./').lstrip('/')
+                    if name in wanted and member.isfile():
+                        content = archive.extractfile(member).read()
+                        (out/wanted[name]).write_bytes(content)
+            if not (out/'dmotor-source-version.json').is_file():
+                raise RuntimeError('Arty image lacks DMOTOR provenance; rebuild image before export')
+            software_identity = json.loads((out/'dmotor-source-version.json').read_text())
+            if (out/'dvrmc-hardware-inputs.json').exists():
+                hardware_identity = json.loads((out/'dvrmc-hardware-inputs.json').read_text())
         print(f'Exporting {target}: collecting binaries and hashing inputs...', flush=True)
         records = {}
         for name, src in inputs.items():
@@ -116,6 +135,7 @@ def main(build):
                 'inputs':records, 'original_wic':{'source':str(disk),'sha256':original_hash},
                 'sdcard_wic_sha256':raw_hash, 'sdcard_wic_bytes':staged.stat().st_size,
                 'sdk_files':[p.name for p in sdks],
+                'dmotor_software':software_identity, 'dvrmc_hardware':hardware_identity,
                 'source_manifest_scope':'Pinned container source revisions; not an attestation of every fetched recipe input.',
                 'verification':'Firmware read-back, source WIC unchanged, compressed stream integrity; physical boot not tested.'}
         (out/'build-info.json').write_text(json.dumps(info,indent=2)+'\n')

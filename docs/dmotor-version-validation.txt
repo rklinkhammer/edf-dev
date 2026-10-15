@@ -1,0 +1,31 @@
+2026-10-14: DMOTOR version/submodule and Arty UIO integration
+
+Pinned local DMOTOR commit: 32fb6b94a3d159de3430d5153359c300b0774ef1
+Version: 0.4.0
+Source SHA-256: 710285272c42093f0e95b156e828798453fb29c981fa943967a0961f8e717550
+The new DMOTOR commit has not been pushed. Publish it before sharing an EDF pin.
+
+Validation:
+- Native UBSan: three tests pass.
+- Repeated staging: byte-identical source archive.
+- EDF Arty BitBake: dmotor-semantic-tests dvrmc-firmware u-boot-edf-scr pass.
+- ARM QEMU: three suites pass; all four executables --version pass without hardware.
+- Package QA passes.
+- Generated boot.cmd retains PARTUUID/root flags and adds uio_pdrv_genirq.of_id=generic-uio.
+- Processed firmware overlay has generic-uio and linux,uio-name=dmotor-inspection.
+- Export metadata extraction tested using a synthetic rootfs, including usr/lib firmware path.
+
+Build log: artifacts/logs/arty-z7-20/edf-dev-next-arty-z7-20-e43445b4a728.log
+No new full SD image/export or board boot performed in this increment.
+Rebuild image and export before testing the new kernel/boot/overlay combination.
+
+Base-tree correction:
+- Removed the U-Boot script append; /chosen/bootargs in cortexa9-linux.dts
+  now owns uio_pdrv_genirq.of_id=generic-uio.
+- Updated matched-input checksum and hardware regeneration policy.
+- dtc compilation and fdtget readback pass.
+- Regeneration fixtures verify absent/existing bootargs and preservation of
+  unrelated console arguments without duplicate UIO options.
+- The earlier boot-script patch verification above is historical/superseded.
+- BitBake-deployed base DTB read back with fdtget: /chosen/bootargs contains
+  uio_pdrv_genirq.of_id=generic-uio.

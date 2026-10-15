@@ -1,0 +1,47 @@
+Automated Arty workflow validation — 2026-10-14 America/New_York
+
+Commands:
+  ./edf --target arty-z7-20 hardware --dry-run
+  ./edf --target arty-z7-20 hardware --xsa hardware/arty-z7-20/dvrmc.xsa --generate-only
+
+Real AMD SDTGen and pinned-container gen-machine-conf completed successfully.
+Candidate and live matched-bundle verification both passed; live bundle not replaced.
+Candidate: artifacts/arty-hardware/20261015T030006Z-b9940124/candidate
+The timestamp in the artifact path is UTC.
+
+Tests: 9 test_arty*.py checks and 9 test_bitbake_cli.py checks passed.
+Includes backup/publication, rollback, path rejection, exclusive/shared lock behavior,
+existing importer/overlay checks, and launcher regression tests.
+Python compilation, Bash syntax and git diff whitespace checks passed.
+Vivado 2026.1 save_project_as API checked using installed tool help.
+
+Initially not exercised: fresh Vivado synthesis/implementation and publication.
+See the completed fresh-build validation below.
+Still not exercised: --export-image full image/export chain, physical-board boot
+or motor operation.
+Fresh project builds require available source/IP dependencies and a saved project.
+
+Fresh saved-project build and import — completed 2026-10-14 America/New_York
+  ./edf --target arty-z7-20 hardware
+  ./edf --target arty-z7-20 bitbake dvrmc-firmware
+  python3 scripts/arty-hardware.py
+
+Run: artifacts/arty-hardware/20261015T032028Z-4c648629
+Vivado synthesis, implementation, bitstream, fixed XSA, SDTGen, container
+configuration generation, candidate validation and live publication all passed.
+Implemented io.rpt confirms PULLDOWN on:
+  mc0_fault0[0] U19
+  mc0_fault1[0] W18
+  mc1_fault0[0] W16
+  mc1_fault1[0] V12
+Timing: WNS +2.713 ns, WHS +0.025 ns, WPWS +4.020 ns; no failing endpoints.
+DRC: no errors; 40 DSP pipelining warnings (DPIP-1, DPOP-1, DPOP-2).
+Firmware BitBake: 857 tasks, 839 already current, all succeeded.
+Live bundle verification passed. No fresh SD image was built/exported here.
+
+The first full run exposed read-only generated header replacement failing during
+publication. Publication and rollback now replace individual files via temporary
+files and os.replace, preserving their original modes. Regression coverage checks
+read-only replacement and rollback. 10 test_arty*.py and 9 launcher tests passed.
+The corrected saved project references its imported XDC, with all four pulls;
+the original sibling digilent-xdc file remains a separate file.

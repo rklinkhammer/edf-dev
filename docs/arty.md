@@ -62,9 +62,72 @@ Zynq FPGA Manager `.bin` format and keep the overlay firmware name consistent.
 Loading firmware does not enable motor motion. The controller retains its reset
 inhibit and requires its normal configuration, watchdog and enable sequence.
 This work does not install a DMOTOR Linux driver or motion application. The
-controller's generated `xlnx,controller-axi-0.18` compatible is retained; a Linux
-MMIO access/driver integration remains a separate step. Do not reload or remove
+firmware recipe binds the generated controller node to `generic-uio` for
+inhibited inspection; a production motion driver remains a separate step. Do not reload or remove
 the overlay while a driver/application is using the PL devices.
+
+## Automated hardware build and import
+
+Run on a Linux AMD-tool host, with the Vivado project saved and no GUI build running:
+
+```sh
+# Preview the workflow without invoking tools or modifying the bundle.
+./edf --target arty-z7-20 hardware --dry-run
+
+# Build the saved ../dvrmc/dvrmc.xpr and import its matched hardware bundle.
+./edf --target arty-z7-20 hardware
+
+# Also build Linux/boot firmware and export a fresh SD image.
+./edf --target arty-z7-20 hardware --export-image
+```
+
+The workflow runs Vivado batch synthesis, implementation and bitstream generation
+in a saved project copy, exports a fixed XSA containing the bitstream, runs SDTGen,
+then uses the pinned Docker environment for `gen-machine-conf`. It installs into a
+candidate directory first and verifies the bundle before updating live inputs.
+There is no automatic IP upgrade or substitution of a newer DMOTOR IP repository;
+the saved Vivado project determines the IP versions being built. External source
+and IP dependencies must be available; save constraints before invoking the command.
+If Vivado imported an XDC, edit/save the imported project copy: editing the original
+file in `digilent-xdc` does not update that copy. The completed run includes `io.rpt`
+to check physical pin assignments and pull settings in the implemented design.
+
+Useful variants:
+
+```sh
+./edf --target arty-z7-20 hardware --project /path/to/dvrmc.xpr --jobs 4
+./edf --target arty-z7-20 hardware --xsa /path/to/export-including-bitstream.xsa
+./edf --target arty-z7-20 hardware --xsa /path/to/design.xsa --generate-only
+```
+
+`--xsa` skips Vivado and trusts the supplied implemented XSA; it cannot qualify
+its timing or DRC. `--generate-only` retains a verified candidate without importing
+it. Override `--vivado` and `--sdtgen` if tools are not installed under
+`/opt/vitis/2026.1`. Vivado mode requires the expected part `xc7z020clg400-1`,
+completed synthesis/implementation, nonnegative reported setup/hold slack and no
+DRC errors before export. Timing/DRC reports remain available for review; these
+checks do not constitute complete CDC, external-I/O or motor safety qualification.
+
+Each invocation creates a fresh directory under `artifacts/arty-hardware/` (or the
+configured artifacts mount), with XSA, SDT, generated configuration, candidate,
+Vivado reports/logs and workflow metadata. Before import, `previous/` backs up all
+files that will be overwritten and records affected paths in `restore.json`.
+Normal import failures restore those files; a power loss or SIGKILL can interrupt
+publication, so retain the backup for recovery. The manifest is copied last and
+subsequent builds verify it. The previous bundle is not touched during generation.
+
+Hardware commands take an exclusive repository lock; ordinary `./edf` builds take
+a shared lock and refuse to overlap import. This protects commands started through
+this checkout's launcher, not manual Docker/BitBake processes or another checkout
+sharing the same volumes. Stop those before importing. The ZC702 generation
+bootstrap also takes its existing container target lock.
+
+Docker context selection is unchanged. Vivado/SDTGen run on the host; OrbStack does
+not make AMD tools run on macOS. Use a supported tool host for this command and
+transfer the resulting bundle/configuration for Mac-based EDF builds. The command
+does not flash a board, load an FPGA or run motor commands.
+
+The individual commands below remain useful for diagnosis or custom workflows.
 
 ## Regenerate after a Vivado hardware change
 
@@ -129,3 +192,30 @@ This target establishes the software build and explicit Linux loading path.
 Physical SD boot, Ethernet/USB behavior, overlay loading on the Arty, and motor
 operation still require board testing. The motor controller and H-bridge retain
 their own integration and timing qualification requirements.
+
+## UIO inspection and software identity update
+
+The Arty firmware recipe now changes the controller overlay binding to
+`generic-uio`, named `dmotor-inspection`. The Arty base Linux device tree supplies `/chosen/bootargs` containing
+`uio_pdrv_genirq.of_id=generic-uio`. The stock boot script reads this property
+and appends its existing root arguments; UIO and its
+generic platform driver are explicitly built in. No boot-script patch is used. Hardware regeneration preserves this base-tree
+policy. Other targets are unchanged. Bitstream loading remains manual; this does not authorize motion.
+
+Rebuild and export with `./edf --target arty-z7-20 image`, then
+`./edf --target arty-z7-20 export`. On the newly booted image check:
+
+```sh
+cat /proc/cmdline
+dmotor-inspect --version
+cat /usr/share/dmotor/source-version.json
+```
+
+After loading the matched firmware/overlay with outputs externally inhibited,
+check `/sys/class/uio/uio*/name` for `dmotor-inspection` before inspecting its index.
+The mapping remains an inhibited bring-up interface with advisory locking, not a
+production motion driver. Existing exports are not modified by these changes.
+
+The base tree is packaged in the board boot artifacts. Rebuild both board firmware
+and Linux (`image`), then export; replacing only the runtime FPGA overlay cannot
+change a built-in driver parameter already consumed during kernel startup.

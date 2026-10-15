@@ -23,3 +23,15 @@ python () {
     if d.getVar('EDF_DVRMC') != '1':
         raise bb.parse.SkipRecipe('DVRMC firmware is selected only by the Arty target')
 }
+
+# Bind only this controller to the opt-in inhibited inspection backend.
+python do_patch:append() {
+    from pathlib import Path
+    path = Path(d.getVar('WORKDIR')) / 'dvrmc.dtso'
+    text = path.read_text()
+    original = 'compatible = "xlnx,controller-axi-0.18";'
+    if text.count(original) != 1:
+        bb.fatal('Expected exactly one DVRMC controller binding')
+    path.write_text(text.replace(original,
+        'compatible = "generic-uio";\n                linux,uio-name = "dmotor-inspection";'))
+}

@@ -62,6 +62,21 @@ def install(root, sdt, conf):
                      else line for line in lines]
             content = '\n'.join(lines) + '\n'
         if source == linux:
+            # Built-in UIO matching must be present before Linux driver init.
+            chosen = re.search(r'(\bchosen\s*\{)(.*?)(\};)', content, flags=re.S)
+            if not chosen:
+                raise ValueError('Linux base tree lacks /chosen')
+            body = chosen.group(2)
+            argument = 'uio_pdrv_genirq.of_id=generic-uio'
+            bootargs = re.search(r'bootargs\s*=\s*"([^"\n]*)"\s*;', body)
+            if bootargs:
+                args = bootargs.group(1).split()
+                args = [arg for arg in args if not arg.startswith('uio_pdrv_genirq.of_id=')]
+                args.append(argument)
+                body = body[:bootargs.start()] + 'bootargs = "' + ' '.join(args) + '";' + body[bootargs.end():]
+            else:
+                body = '\n                bootargs = "' + argument + '";' + body
+            content = content[:chosen.start(2)] + body + content[chosen.end(2):]
             # Regenerate symbols with dtc -@; Lopper's memory-node symbol can be stale.
             content = re.sub(r'\n        __symbols__ \{.*?\n        \};', '', content, flags=re.S)
             # SDTGen 2026.1 emits a MicroBlaze root compatible for this Zynq board.

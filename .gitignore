@@ -7,3 +7,5 @@ sstate-cache/
 .env
 __pycache__/
 *.pyc
+
+.edf-hardware.lock

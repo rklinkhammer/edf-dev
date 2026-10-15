@@ -172,6 +172,51 @@ bundle; see [Arty inputs](docs/arty.md). Physical-board qualification remains pe
 PolarFire remains supported by the original checkout, not this AMD replacement.
 See [migration](docs/migration.md) before retiring the original environment.
 
+## Kernel menuconfig and persistent changes
+
+Open an interactive terminal in the initialized Arty Linux build environment:
+
+```sh
+./edf --target arty-z7-20 shell
+```
+
+Inside the container, open the kernel configuration menu:
+
+```sh
+bitbake -c menuconfig virtual/kernel
+```
+
+For example, press `/` and search for `CAN`, then disable **CAN bus subsystem
+support** (`CONFIG_CAN`). Save and exit menuconfig. Inspect the resulting changes:
+
+```sh
+bitbake -c diffconfig virtual/kernel
+```
+
+BitBake reports the generated configuration fragment's location. Menuconfig edits
+live in build state and are not a persistent repository configuration. Review the
+fragment and copy the intended settings into the checked-in kernel configuration.
+For Arty, edit [dvrmc-fpga.cfg](meta-edf-dev/recipes-kernel/linux/files/dvrmc-fpga.cfg)
+on the host; `/project` is mounted read-only in the container. To disable CAN, add:
+
+```text
+# CONFIG_CAN is not set
+```
+
+The Linux recipe append includes this fragment when `EDF_DVRMC = "1"` (the Arty
+target). This disables kernel CAN support; it does not remove CAN device-tree
+nodes or userspace packages.
+
+Exit the container shell first to release the target lock, then rebuild and export
+from the host:
+
+```sh
+./edf --target arty-z7-20 image
+./edf --target arty-z7-20 export
+```
+
+Export only packages existing build artifacts; it does not rebuild the kernel.
+
 ## Verification
 
 Run the standard Python unittest suite as your normal user. The real Docker
@@ -185,3 +230,38 @@ and hash/storage policy inside the built container.
 
 `check` is a dependency dry run, not compilation or hardware certification.
 Actual NFS access is tested only when your chosen NFS directories are mounted.
+
+## Pinned DMOTOR software
+
+Initialize dependencies after cloning:
+
+```sh
+git submodule update --init --recursive
+```
+
+`./edf` stages DMOTOR automatically from the clean, pinned `external/dmotor`
+submodule before build commands. No sibling-checkout staging is required. Update
+that checkout to the desired DMOTOR commit and `git add external/dmotor` to select
+a new pin. Commit/publish DMOTOR before publishing an EDF commit that refers to it.
+An explicit development override is available:
+
+```sh
+EDF_DMOTOR_SOURCE=../dmotor ./edf --target arty-z7-20 image
+```
+
+Each application prints its source identity at startup and supports `--version`.
+The installed manifest is `/usr/share/dmotor/source-version.json`. Exports copy
+that manifest from the **built root filesystem** and record it beside the hardware
+identity in `build-info.json`; they do not report the current checkout as if it
+were the software installed in an older image. Arty export now rejects images
+without software provenance. Rebuild the image before exporting.
+
+## Automated Arty hardware generation
+
+On the AMD-tool host, run `./edf --target arty-z7-20 hardware --dry-run` to preview,
+or `./edf --target arty-z7-20 hardware --export-image` to build the saved DVRMC
+Vivado project, generate/import the matched hardware bundle, and build/export the
+SD image. Use `--generate-only` to retain a candidate without importing it, or
+`--xsa PATH` to start from an existing implemented XSA. See
+[the hardware workflow](docs/arty.md#automated-hardware-build-and-import) for tool
+paths, backups, validation limits and build exclusion.

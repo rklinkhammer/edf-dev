@@ -783,6 +783,7 @@
         };
 
         chosen {
+                bootargs = "uio_pdrv_genirq.of_id=generic-uio";
                 stdout-path = "serial0:115200n8";
         };
 
