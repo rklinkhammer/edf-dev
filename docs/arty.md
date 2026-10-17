@@ -219,3 +219,25 @@ production motion driver. Existing exports are not modified by these changes.
 The base tree is packaged in the board boot artifacts. Rebuild both board firmware
 and Linux (`image`), then export; replacing only the runtime FPGA overlay cannot
 change a built-in driver parameter already consumed during kernel startup.
+
+### Encoder-only maintenance utility
+
+The Arty image includes `dmotor-encoder` (DMOTOR 0.5.0 or later). After loading the
+FPGA, with all motors disabled/unconfigured and motor drive power disconnected:
+
+```sh
+sudo dmotor-encoder --externally-inhibited 0
+```
+
+It releases the encoder reset and prints raw positions every 250 ms. Rotate the
+shaft manually and reverse direction to verify counts and channel mapping.
+Ctrl-C restores core reset. Verify encoder A/B voltage compatibility before
+connecting: a 5 V encoder supply does not establish 3.3 V-safe outputs. This
+utility neither configures nor enables motion. It is separate from semantic
+tests and is not started at boot. Do not reload the FPGA while it owns UIO.
+
+To build local software changes instead of the pinned submodule, explicitly set
+`EDF_DMOTOR_SOURCE=../dmotor` on the hardware/image command. Check the startup
+version and `/usr/share/dmotor/source-version.json` against the exported build
+metadata. For a deliberate IP upgrade, use the isolated-project preparation
+workflow in `dmotor/docs/current_ip_export.md` before invoking `hardware`.
