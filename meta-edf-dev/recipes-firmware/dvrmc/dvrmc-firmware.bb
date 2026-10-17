@@ -24,7 +24,8 @@ python () {
         raise bb.parse.SkipRecipe('DVRMC firmware is selected only by the Arty target')
 }
 
-# Bind only this controller to the opt-in inhibited inspection backend.
+# The production binding owns the GPIO-to-HALT source and excludes UIO.
+EDF_DMOTOR_ACCESS ?= "inspection"
 python do_patch:append() {
     from pathlib import Path
     path = Path(d.getVar('WORKDIR')) / 'dvrmc.dtso'
@@ -32,6 +33,14 @@ python do_patch:append() {
     original = 'compatible = "xlnx,controller-axi-0.18";'
     if text.count(original) != 1:
         bb.fatal('Expected exactly one DVRMC controller binding')
-    path.write_text(text.replace(original,
-        'compatible = "generic-uio";\n                linux,uio-name = "dmotor-inspection";'))
+    mode = d.getVar('EDF_DMOTOR_ACCESS')
+    if mode == 'inspection':
+        binding = 'compatible = "generic-uio";\n                linux,uio-name = "dmotor-inspection";'
+    elif mode == 'production':
+        if 'axi_gpio_3: gpio@41230000' not in text:
+            bb.fatal('Production HALT binding requires the reviewed DVRMC axi_gpio_3 topology')
+        binding = 'compatible = "dmotor,controller-0.18";\n                halt-gpios = <&axi_gpio_3 0 0>;'
+    else:
+        bb.fatal('EDF_DMOTOR_ACCESS must be inspection or production')
+    path.write_text(text.replace(original, binding))
 }

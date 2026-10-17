@@ -241,3 +241,14 @@ To build local software changes instead of the pinned submodule, explicitly set
 version and `/usr/share/dmotor/source-version.json` against the exported build
 metadata. For a deliberate IP upgrade, use the isolated-project preparation
 workflow in `dmotor/docs/current_ip_export.md` before invoking `hardware`.
+
+## Optional DMOTOR lifecycle commissioning
+
+The default `EDF_DMOTOR_ACCESS = "inspection"` retains the working UIO tools.
+The new `"production"` option selects the exclusive `dmotor_access` kernel
+binding and installs `dmotord` plus the separate `dmotor-maint` menu. It does not
+autostart motion or a service. This initial version is for drive-disconnected
+commissioning; kernel HALT propagation and scheduling still require board tests.
+See [DMOTOR commissioning](../../dmotor/software/linux/production.md) for the
+configuration, image commands, and acceptance gates. The revision-6 FPGA already
+contains the GPIO-to-HALT path, so this software milestone does not change RTL.
