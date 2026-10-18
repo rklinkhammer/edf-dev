@@ -11,9 +11,9 @@
     "meta-edf-dev/conf/machine/include/arty-z7-20/arty-z7-20-cortexa9-fsbl-features.conf": "0288f076d1245a7afe49d56913115b5223b911ce2408882f5a7ad379017de96b",
     "meta-edf-dev/conf/machine/include/arty-z7-20/arty-z7-20-cortexa9-fsbl-libxil.conf": "9d13a5684cb43300584dc56082da221b325e0f4f08a580558ee68217d223db24",
     "meta-edf-dev/conf/multiconfig/arty-z7-20-cortexa9-fsbl.conf": "7c192acfa82d27c30a3267bbfdef77ab1c184654e39d86fe456bce96cc6e1646",
-    "hardware/arty-z7-20/dvrmc.bit": "1317860d0bad7887ddb9da904d74dbabbc6143e25f98ce1ebfabad3330746f67",
+    "hardware/arty-z7-20/dvrmc.bit": "af3e93b4e3235744141ca7f52a98d7d4e53fe3e6f9584f58a18b01f0770a65ba",
     "hardware/arty-z7-20/dvrmc.dtso": "e2ba9cda2bfb73822d3ac1a497b86cbc70b869fca76c5e8f4ba4b64737b62895",
-    "hardware/arty-z7-20/sdt/dvrmc.bit": "1317860d0bad7887ddb9da904d74dbabbc6143e25f98ce1ebfabad3330746f67",
+    "hardware/arty-z7-20/sdt/dvrmc.bit": "af3e93b4e3235744141ca7f52a98d7d4e53fe3e6f9584f58a18b01f0770a65ba",
     "hardware/arty-z7-20/sdt/include/dt-bindings/clock/xlnx-versal-clk.h": "235ff89509bf2457aa9f95731758baee66481eaeb0d4abc9615646618aa020f2",
     "hardware/arty-z7-20/sdt/include/dt-bindings/clock/xlnx-versal-net-clk.h": "433fdb85599605354c44be5557c7abb2f98b7f203a0ad84a99da5202acfd0c53",
     "hardware/arty-z7-20/sdt/include/dt-bindings/clock/xlnx-versal2-clk.h": "9fd0bbd5d36bc93f54312fbb4418595196cfe86c914fee574cd9202bd12c4a91",
@@ -50,8 +50,8 @@
     "hardware/arty-z7-20/sdt/zynq-7000.dtsi": "954ca3cf75f820cc3fa2603f473b6ab13cc44628b26cd4356bb8ed0ee023fb2a"
   },
   "dmotor": {
-    "dmotor_commit": "0a3deb7d056ff9744ee840453b2723b2a65c2ce5",
-    "dmotor_hardware_sha256": "65d358a1dbc98986307209bb89567a12653078a899efa7cf325b0d8515c856e2",
+    "dmotor_commit": "f69db32870c1f244db06d0accd0e2126d267e1df",
+    "dmotor_hardware_sha256": "c4ee48d35490d818c53f40144af6c12f83cc0fe312b8dc945a8951b40da68d53",
     "tools": {
       "vivado": "/opt/vitis/2026.1/Vivado/bin/vivado",
       "sdtgen": "/opt/vitis/2026.1/Vitis/bin/sdtgen"
