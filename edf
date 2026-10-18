@@ -41,7 +41,7 @@ case "$1" in
   help|--help|-h)
     echo 'Usage: ./edf [--target TARGET] [--machine linux|board|MACHINE] [--context CONTEXT] [bitbake] [BITBAKE_ARGS...]'
     echo 'Default: BitBake builds the selected target image on its Linux machine.'
-    echo 'Convenience commands: image boot linux sdk check validate shell export qemu qemu-prepare hardware'
+    echo 'Convenience commands: image boot linux sdk check validate shell export qemu qemu-prepare hardware build'
     echo 'Container commands: build-container config stop help'
     echo 'Use bitbake (or --) to bypass command aliases, e.g. ./edf bitbake --help.'
     echo '--machine applies to direct BitBake and shell; convenience commands keep their target mappings.'
@@ -51,6 +51,9 @@ esac
 # Hardware import replaces shared layer inputs, so exclude all concurrent launcher builds.
 if [[ ${EDF_HARDWARE_LOCKED:-0} != 1 ]]; then
   exec python3 scripts/hardware-lock.py "$0" "$@"
+fi
+if [[ $1 == build ]]; then
+  shift; set -- hardware --export-image "$@"
 fi
 if [[ $1 == hardware ]]; then
   [[ $EDF_TARGET == arty-z7-20 ]] || { echo 'hardware requires --target arty-z7-20' >&2; exit 2; }

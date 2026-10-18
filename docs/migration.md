@@ -1,4 +1,7 @@
-# Migration and rollback
+# Historical Docker-environment migration and rollback
+
+For the current DMOTOR/Arty source and build migration, use [the build guide](build.md).
+The checklist below records the earlier Docker-environment migration.
 
 The original `/Volumes/Zeus/workspace/edf-dev` checkout, image and four volumes
 remain intact. This replacement uses a distinct Compose project and volumes.

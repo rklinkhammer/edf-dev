@@ -5,6 +5,8 @@ from datetime import datetime, timezone
 import importlib.util
 import json
 import os
+import runpy
+
 from pathlib import Path
 import shutil
 import subprocess
@@ -13,6 +15,8 @@ import tempfile
 import uuid
 
 ROOT = Path(__file__).resolve().parents[1]
+sys.path.insert(0,str(ROOT/'scripts'))
+from hardware_bundle import pack, unpack
 spec = importlib.util.spec_from_file_location('arty_import', ROOT/'scripts/arty-hardware.py')
 importer = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(importer)
@@ -63,8 +67,10 @@ def publish(candidate, root, backup):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     inputs = parser.add_mutually_exclusive_group()
-    inputs.add_argument('--project', type=Path, default=None, help='Saved Vivado XPR (default ../dvrmc/dvrmc.xpr)')
+    inputs.add_argument('--project', type=Path, default=None, help='Legacy saved project override; skips DMOTOR HLS/IP rebuild')
     inputs.add_argument('--xsa', type=Path, help='Use an existing fixed XSA including bitstream; skip Vivado')
+    inputs.add_argument('--bundle', type=Path, help='Import a verified portable bundle; no AMD tools required')
+    parser.add_argument('--force', action='store_true', help='Rebuild tested DMOTOR IP even if fingerprint matches')
     parser.add_argument('--vivado', type=Path, default=Path('/opt/vitis/2026.1/Vivado/bin/vivado'))
     parser.add_argument('--sdtgen', type=Path, default=Path('/opt/vitis/2026.1/Vitis/bin/sdtgen'))
     parser.add_argument('--jobs', type=int, default=4)
@@ -74,22 +80,46 @@ def main():
     args = parser.parse_args()
     if args.jobs < 1 or (args.generate_only and args.export_image):
         parser.error('Positive jobs required; generate-only cannot export an image')
-    source = (args.xsa or args.project or ROOT.parent/'dvrmc/dvrmc.xpr').expanduser().resolve()
-    if not source.is_file(): parser.error(f'Missing input: {source}')
-    print(f'Input: {source}\nStages: '+('XSA copy' if args.xsa else 'Vivado project copy -> synthesis -> implementation -> bitstream -> XSA')+
-          ' -> SDTGen -> container gen-machine-conf -> candidate verification -> '+
-          ('retain candidate' if args.generate_only else 'backup + import')+
-          (' -> EDF image + export' if args.export_image else ''), flush=True)
-    if args.dry_run: return
-    for tool in ([args.sdtgen] if args.xsa else [args.vivado,args.sdtgen]):
-        if not tool.is_file(): parser.error(f'Missing AMD tool: {tool}')
+    dmotor = runpy.run_path(str(ROOT/'scripts/dmotor-source.py'))['resolve']()
+    env = {**os.environ, 'EDF_DMOTOR_SOURCE':str(dmotor)}
+    product = not (args.project or args.xsa or args.bundle)
+    if product and not (dmotor/'tools/build.py').is_file():
+        parser.error('Selected DMOTOR revision predates the product workflow; update the pin or set EDF_DMOTOR_SOURCE')
+    hardware_key = runpy.run_path(str(dmotor/'tools/build.py'))['fingerprint']() if product else None
+    source = (args.bundle or args.xsa or args.project or dmotor/'build/product/vivado/dvrmc.xpr').expanduser().resolve()
+    if not product and not source.is_file(): parser.error(f'Missing input: {source}')
+    print(f'DMOTOR hardware/software source: {dmotor}\nInput: {source}',flush=True)
+    if args.dry_run:
+        if product:
+            run([sys.executable,dmotor/'tools/build.py','project','--dry-run'],dmotor,env)
+        print('Stages: '+('verified bundle import' if args.bundle else 'Vivado/XSA -> SDT -> candidate validation -> bundle -> import')+
+              (' -> image -> export' if args.export_image else ''),flush=True)
+        return
+    if product:
+        run([sys.executable,dmotor/'tools/build.py','project','--amd-root',args.vivado.parents[2]]+
+            (['--force'] if args.force else []),dmotor,env)
+    if not args.bundle:
+        for tool in ([args.sdtgen] if args.xsa else [args.vivado,args.sdtgen]):
+            if not tool.is_file(): parser.error(f'Missing AMD tool: {tool}')
     docker = ['docker']
     if os.environ.get('EDF_DOCKER_CONTEXT'): docker += ['--context',os.environ['EDF_DOCKER_CONTEXT']]
     artifacts = Path(subprocess.check_output(['python3','scripts/host-config.py'],cwd=ROOT,text=True).strip())
     stage = artifacts/'arty-hardware'/ (datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')+'-'+uuid.uuid4().hex[:8])
     stage.mkdir(parents=True)
     print(f'Logs, candidate and backup: {stage}',flush=True)
-    env = {**os.environ, 'EDF_ARTIFACTS':str(artifacts)}
+    env['EDF_ARTIFACTS']=str(artifacts)
+    if args.bundle:
+        record=unpack(source,stage/'imported')
+        candidate=stage/'imported/candidate'
+        importer.verify(candidate)
+        expected=record.get('dmotor_hardware_sha256')
+        if expected and expected != runpy.run_path(str(dmotor/'tools/build.py'))['fingerprint']():
+            raise ValueError('Bundle and selected DMOTOR hardware sources differ; select the matching checkout')
+        if not args.generate_only: publish(candidate,ROOT,stage/'previous')
+        if args.export_image:
+            for action in ('image','export'): run([ROOT/'edf','--target','arty-z7-20',action],ROOT,env)
+        print(('Verified candidate bundle: ' if args.generate_only else 'Imported verified bundle: ')+str(stage),flush=True)
+        return
     if args.xsa: shutil.copy2(source,stage/'dvrmc.xsa')
     else:
         run([args.vivado,'-mode','batch','-source',ROOT/'scripts/vivado/arty-build.tcl',
@@ -103,7 +133,18 @@ def main():
     importer.install(candidate,stage/'sdt',stage/'conf')
     importer.verify(candidate)
     (stage/'workflow.json').write_text(json.dumps({'source':str(source),'xsa_sha256':importer.sha(stage/'dvrmc.xsa'),
-              'generate_only':args.generate_only},indent=2)+'\n')
+              'generate_only':args.generate_only,'dmotor_source':str(dmotor)},indent=2)+'\n')
+    if product and hardware_key != runpy.run_path(str(dmotor/'tools/build.py'))['fingerprint']():
+        raise ValueError('DMOTOR sources changed during board build; candidate not imported')
+    metadata={'dmotor_commit':subprocess.check_output(['git','-C',str(dmotor),'rev-parse','HEAD'],text=True).strip(),
+              'dmotor_hardware_sha256':hardware_key,
+              'tools':{'vivado':str(args.vivado),'sdtgen':str(args.sdtgen)},
+              'origin':'product' if product else 'legacy-explicit-input'}
+    manifest_path=candidate/importer.MANIFEST
+    manifest=json.loads(manifest_path.read_text())
+    manifest['dmotor']=metadata
+    manifest_path.write_text(json.dumps(manifest,indent=2)+'\n')
+    print('Portable hardware bundle: '+str(pack(stage,metadata)),flush=True)
     if not args.generate_only:
         publish(candidate,ROOT,stage/'previous')
         print('Installed and verified matched Arty bundle.',flush=True)

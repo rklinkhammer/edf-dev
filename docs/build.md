@@ -1,0 +1,346 @@
+# Build guide — EDF Linux and the DMOTOR Arty system
+
+This replacement lives alongside the original EDF environment. It uses a separate
+Compose project `edf-dev-next`, image, local build volume and hash-server volume.
+AMD EDF 26.06.1 sources are baked into the image using the checked-in upstream
+manifest and exact manifest commit. Changing sources requires rebuilding the image.
+
+## BitBake first
+
+Run as your normal user. Docker Engine, Compose, Bash, and host Python 3 are
+required. Build the container once, then use ordinary BitBake arguments:
+
+```sh
+./edf build-container
+./edf                                      # bitbake edf-linux-disk-image
+./edf edf-linux-disk-image                  # same, explicit recipe
+./edf bitbake -n edf-linux-disk-image
+./edf bitbake -c compile linux-xlnx
+./edf bitbake -c populate_sdk edf-linux-disk-image
+./edf bitbake --help                        # BitBake's help
+./edf --target zcu111 bitbake -e edf-linux-disk-image
+./edf --target zc702 --machine board bitbake xilinx-bootbin
+./edf --target zcu111 --machine board shell
+```
+
+`--target` selects the board configuration and persistent build directory.
+`--machine linux` (default) selects that target's common CPU-family Linux machine;
+`--machine board` selects its firmware machine. An explicit Yocto MACHINE name is
+also accepted. It must be provided by the configured layers; BitBake reports
+unsupported machines. Machine selection applies to direct BitBake commands and
+the initialized shell. With no BitBake arguments, the default recipe remains
+`edf-linux-disk-image`; specify `xilinx-bootbin` for firmware builds.
+
+Launcher options must precede the command. After `bitbake`, arguments are passed
+unchanged, including options, multiple recipes, and paths containing spaces.
+Use `./edf bitbake <recipe>` or `./edf -- <recipe>` to bypass a convenience-command
+name collision. `./edf --help` describes the launcher. The shell has BitBake and
+its environment initialized and holds the target lock until you exit.
+
+## Higher-level commands
+
+```sh
+./edf --target zc702 image       # board firmware, then Linux image
+./edf --target zc702 boot        # board firmware only
+./edf --target zc702 linux       # Linux image only
+./edf --target zc702 sdk         # standard image SDK
+./edf --target zc702 check       # dry-run firmware and Linux dependencies
+./edf --target zc702 export
+./edf --target zcu111 qemu
+./edf validate
+```
+
+These commands keep their established board/Linux mappings; `--machine` does not
+change them. **Migration:** bare `./edf` now builds only the Linux image. Use
+`./edf image` when you want the previous combined firmware-plus-Linux workflow.
+
+All noninteractive builds, including direct BitBake calls, keep the supervisor's
+cancellation, log capture, and exit-status propagation. A failed firmware command
+stops `image` before Linux builds. Target locks, exports, and QEMU behavior are
+preserved. No flashing occurs.
+
+Builds stream directly from an attached container. In a terminal, BitBake shows
+its live parsing percentages and task display. Redirected output uses BitBake's
+normal plain-text mode. The same output is saved under `artifacts/logs/<target>/`
+(terminal logs include carriage returns and ANSI formatting). Ctrl+C stops the
+current build, and the launcher returns its exit status. A cold recipe cache can
+take several minutes to parse.
+
+## Complete DMOTOR / Arty build
+
+The board sources now live in DMOTOR under `platforms/arty-z7-20`. The old DVRMC
+checkout is migration reference only. Hardware and software resolve the same
+source: the clean pinned `external/dmotor`, or an explicit development override.
+Until the migration is committed and the submodule pin updated, use the override.
+
+```sh
+# Run in edf-dev; preview has no build/import side effects.
+EDF_DMOTOR_SOURCE=../dmotor ./edf --target arty-z7-20 build --dry-run
+# Linux AMD-tool host: tested IP -> board -> bundle -> Linux -> SD export.
+EDF_DMOTOR_SOURCE=../dmotor ./edf --target arty-z7-20 build
+# Hardware stages/import only; no Linux/image build.
+EDF_DMOTOR_SOURCE=../dmotor ./edf --target arty-z7-20 hardware
+# Rebuild IP even when its source fingerprint matches.
+EDF_DMOTOR_SOURCE=../dmotor ./edf --target arty-z7-20 hardware --force
+```
+
+The product pipeline prepares the exact one-phase, four-motor, 400 RPM/20 MHz HLS
+profile; runs native tests and HLS C simulation/synthesis/co-simulation; packages
+IP and runs the integrated AXI simulation; recreates the board project; synthesizes
+and routes it; checks timing/DRC; exports XSA; generates SDT and EDF configuration;
+then installs a verified candidate. `build` additionally builds and exports Linux.
+Failures stop the sequence. HLS/IP reuse requires a matching input fingerprint.
+Vivado projects are recreated; Linux retains BitBake's task/sstate dependency logic.
+
+Use `--vivado /installation/Vivado/bin/vivado` and `--sdtgen
+/installation/Vitis/bin/sdtgen` for another installation of the qualified 2026.1
+tools. `--jobs N` controls board synthesis/implementation jobs. `--generate-only`
+keeps a candidate/bundle without importing it (hardware command only).
+
+The current target configuration selects `EDF_DMOTOR_ACCESS = "production"`.
+Production images install `dmotor-access`, whose dependency pulls in the
+versioned kernel module, and `dmotor-runtime`.
+See [board operation](arty.md) for the binding and commissioning implications.
+
+### Software-only iteration
+
+```sh
+EDF_DMOTOR_SOURCE=../dmotor ./edf --target arty-z7-20 bitbake dmotor-semantic-tests dmotor-access
+EDF_DMOTOR_SOURCE=../dmotor ./edf --target arty-z7-20 image
+EDF_DMOTOR_SOURCE=../dmotor ./edf --target arty-z7-20 export
+```
+
+These commands reuse the selected hardware inputs and do not invoke HLS/Vivado.
+For product bundles, the installed hardware fingerprint must match the selected
+checkout; hardware edits require a hardware rebuild/import before image creation.
+Use `image` after package changes to put them in the root filesystem; compiling a
+recipe alone does not update an already exported SD image.
+
+### Portable hardware bundles / macOS
+
+Each hardware build writes `artifacts/arty-hardware/<run>/hardware-bundle.tar.gz`.
+It contains the matched candidate inputs, XSA, reports and checksum/provenance
+manifest. Transfer this archive plus the matching DMOTOR checkout to a Mac:
+
+```sh
+EDF_DMOTOR_SOURCE=../dmotor ./edf --context orbstack --target arty-z7-20 hardware \
+  --bundle /path/to/hardware-bundle.tar.gz --export-image
+```
+
+Bundle import requires no AMD tools. Product bundles must match the selected
+DMOTOR hardware fingerprint; software can change independently. Archive checksums,
+paths and candidate consistency are checked before import. Existing inputs are
+backed up and import rolls back on failure. Checksums establish consistency, not
+publisher authenticity; use a trusted bundle source.
+
+### Board edits and legacy inputs
+
+Edit the authoritative XDC in `dmotor/platforms/arty-z7-20/constraints`. Open the
+generated `dmotor/build/product/vivado/dvrmc.xpr` for GUI inspection. To retain GUI
+block-design edits, copy its saved `bd/design_1.bd` back to the tracked board-source
+location before rebuilding. The next build recreates the generated project.
+Do not edit an imported copy in the old DVRMC project.
+
+`hardware --project saved.xpr` and `hardware --xsa export.xsa` remain explicit legacy
+import paths; they skip the automatic HLS/IP stages. Their bundles are labelled
+legacy and cannot establish a DMOTOR hardware source fingerprint. Prefer the
+product path for reproducible releases. No live FPGA is programmed by these builds.
+
+## Docker context and macOS
+
+On macOS, the launcher defaults to `orbstack`. On Linux, it defaults to Docker's
+active context. Override either:
+
+```sh
+./edf --context orbstack bitbake -n edf-linux-disk-image
+EDF_DOCKER_CONTEXT=default ./edf bitbake --version
+```
+
+Precedence is `--context`, then `EDF_DOCKER_CONTEXT`, then Docker's own
+`DOCKER_CONTEXT`/`DOCKER_HOST` environment, then the platform default. Set
+`EDF_DOCKER_CONTEXT=''` to use Docker's active context on macOS. Context selection
+is exported to path resolution, service startup, the build supervisor, and cleanup.
+Set this in your shell environment, not Compose's `.env` file. OrbStack must
+already be installed/running and its context available. The launcher uses
+Bash 3.2-compatible syntax; source builds run as linux/amd64 on Apple Silicon.
+
+## Architecture compared with jetson-yocto-qdma
+
+Both projects bake pinned sources into an image, adopt the invoking user's
+numeric identity, configure Yocto inside the container, and share a local
+Unix-socket hash server. Both now center their CLI on BitBake, with target-specific
+image recipes as defaults.
+
+| Concern | jetson-yocto-qdma | edf-dev |
+| --- | --- | --- |
+| Direct interface | `./yocto <BitBake arguments>` | `./edf [bitbake] <BitBake arguments>` |
+| Machine selection | `MACHINE` environment variable | `--target` plus `--machine linux/board/name` |
+| Build storage | Host project bind mount | Local Linux volume; NFS-capable cache/artifact binds |
+| Workflow additions | Single image recipe | Optional firmware/image, SDK, export, and QEMU helpers |
+| Process handling | Attached Compose run | Supervised builds with logs and cancellation |
+
+EDF retains local Linux build storage because macOS file sharing and NFS are
+unsuitable for its mutable build tree. Its board firmware and Linux image use
+different MACHINE values, so a target mapping remains useful even with direct
+BitBake access. There is no need to copy Jetson's host-bound build tree to expose
+the same BitBake interface.
+
+## Identity and storage
+
+The launcher supplies UID, primary GID and supplementary groups. A short root
+entrypoint creates an account, initializes local volume ownership, and drops to
+that identity before building. It never recursively chowns project or cache trees.
+NFS access requires matching server permissions/ACLs; root squash can stay enabled.
+
+Set mount paths in `.env` (absolute paths on the Docker host):
+
+```dotenv
+EDF_DOWNLOADS=/mnt/nfs/yocto/downloads
+EDF_SSTATE=/mnt/nfs/yocto/sstate-cache
+EDF_ARTIFACTS=/mnt/nfs/edf/artifacts
+# Optional pre-created local Linux directory instead of named build volume:
+# EDF_BUILD_ROOT=/var/lib/edf/builds
+```
+
+The project and custom layer may themselves reside on NFS. Pre-create shared
+paths with appropriate permissions. Builds and TMPDIR stay on local Linux storage;
+the preflight rejects NFS and macOS-shared build storage. Downloads and sstate
+are reusable across hosts. Each host has independent mutable build trees/locks.
+
+Hashserv starts automatically and must pass a health check. Its Scarthgap BitBake
+server listens on `/hashserv/hashserv.sock`; only it opens the SQLite database.
+The database and socket stay in `edf-dev-next_hashserv`, on local Docker storage.
+No TCP port is published. OEEquivHash is enabled; upstream hash services and remote
+sstate mirrors are disabled. Use one invoking user per local build/hashserv volume;
+finish builds before switching accounts. Existing files owned by another user
+require administrator-managed groups/ACLs; there is no recursive ownership repair.
+
+`./edf stop` stops services without removing volumes. Never use `down -v` unless
+you intend to delete the replacement's local build and hash database state.
+
+## Configuration and targets
+
+Generated local.conf/bblayers.conf are reconciled on each command. Unchanged
+files retain their timestamps so BitBake can reuse its parse cache. Edit
+`config/build-policy.inc`, `config/targets/<target>.conf`, or `meta-edf-dev/`.
+Target machine/recipe mappings live in `config/targets/<target>.sh`; the launcher
+uses these definitions to validate selectors.
+Vendor templates are retained so EDF defaults and layer dependencies remain intact;
+our policy is loaded afterward. The layer declares Scarthgap compatibility.
+Builds default to four container CPUs, 12 GiB RAM, two BitBake workers and `-j4`.
+Finish active builds before editing scripts, shared policy or layer files.
+
+ZC702 and ZCU111 retain their distinct firmware machines and CPU-family image
+machines. Exports retain machine matching, firmware insertion into a copied WIC,
+read-back, hashes and timestamped publication. Original WIC files are unchanged.
+QEMU runs with user-mode networking and a disposable snapshot.
+
+Arty Z7-20 uses its generated DVRMC machine configuration and matching hardware
+bundle; see [Arty inputs](arty.md). Physical-board qualification remains pending.
+PolarFire remains supported by the original checkout, not this AMD replacement.
+See [migration](migration.md) before retiring the original environment.
+
+## Kernel menuconfig and persistent changes
+
+Open an interactive terminal in the initialized Arty Linux build environment:
+
+```sh
+./edf --target arty-z7-20 shell
+```
+
+Inside the container, open the kernel configuration menu:
+
+```sh
+bitbake -c menuconfig virtual/kernel
+```
+
+For example, press `/` and search for `CAN`, then disable **CAN bus subsystem
+support** (`CONFIG_CAN`). Save and exit menuconfig. Inspect the resulting changes:
+
+```sh
+bitbake -c diffconfig virtual/kernel
+```
+
+BitBake reports the generated configuration fragment's location. Menuconfig edits
+live in build state and are not a persistent repository configuration. Review the
+fragment and copy the intended settings into the checked-in kernel configuration.
+For Arty, edit [dvrmc-fpga.cfg](../meta-edf-dev/recipes-kernel/linux/files/dvrmc-fpga.cfg)
+on the host; `/project` is mounted read-only in the container. To disable CAN, add:
+
+```text
+# CONFIG_CAN is not set
+```
+
+The Linux recipe append includes this fragment when `EDF_DVRMC = "1"` (the Arty
+target). This disables kernel CAN support; it does not remove CAN device-tree
+nodes or userspace packages.
+
+Exit the container shell first to release the target lock, then rebuild and export
+from the host:
+
+```sh
+./edf --target arty-z7-20 image
+./edf --target arty-z7-20 export
+```
+
+Export only packages existing build artifacts; it does not rebuild the kernel.
+
+## Verification
+
+Run the standard Python unittest suite as your normal user. The real Docker
+cancellation test is opt-in with `EDF_RUNTIME_TEST=1`; it creates and removes
+its own temporary Compose project. Set `QEMUBOOT_TOOL` to the release's
+`meta-xilinx-core/scripts/qemuboot-tool` to enable the upstream merge tests.
+`tests/test_bitbake_cli.py` checks default/direct dispatch, argument boundaries,
+exit propagation, convenience mappings, and simulated Linux/macOS context selection.
+`tests/runtime/configuration.sh` checks effective firmware/Linux machine selection
+and hash/storage policy inside the built container.
+
+`check` is a dependency dry run, not compilation or hardware certification.
+Actual NFS access is tested only when your chosen NFS directories are mounted.
+
+## Pinned DMOTOR software
+
+Initialize dependencies after cloning:
+
+```sh
+git submodule update --init --recursive
+```
+
+`./edf` stages DMOTOR automatically from the clean, pinned `external/dmotor`
+submodule before build commands. No sibling-checkout staging is required. Update
+that checkout to the desired DMOTOR commit and `git add external/dmotor` to select
+a new pin. Commit/publish DMOTOR before publishing an EDF commit that refers to it.
+An explicit development override is available:
+
+```sh
+EDF_DMOTOR_SOURCE=../dmotor ./edf --target arty-z7-20 image
+```
+
+Each application prints its source identity at startup and supports `--version`.
+The installed manifest is `/usr/share/dmotor/source-version.json`. Exports copy
+that manifest from the **built root filesystem** and record it beside the hardware
+identity in `build-info.json`; they do not report the current checkout as if it
+were the software installed in an older image. Arty export now rejects images
+without software provenance. Rebuild the image before exporting.
+
+## Board operation
+
+See [Arty operation](arty.md) for firmware loading and access-mode selection.
+
+## Migration validation (2026-10-17)
+
+Validated the selected latest DVRMC root BD/XDC through HLS/IP, Vivado route,
+SDT/EDF import, portable-bundle validation, production Linux image and SD export.
+The board has two fault inputs (`mc0_fault`, `mc1_fault`) and two shared-HALT
+outputs (`mc0_halt`, `mc1_halt`). Routing passed with +2.552 ns setup and
++0.011 ns hold slack, zero DRC errors; existing DSP pipeline and PS DDR skew
+warnings remain.
+
+- Hardware bundle: `artifacts/arty-hardware/20261018T014024Z-a54a6bd9/hardware-bundle.tar.gz`.
+- SD export: `artifacts/arty-z7-20/20261018T021317Z-2dde50db`.
+- Production image includes `dmotor-access`, its versioned kernel module,
+  `dmotor-runtime`, inspection/encoder tools and semantic tests.
+- No physical board programming, boot validation or powered-motor testing was performed.
+
+See [component evidence](../../dmotor/docs/evidence/build_workflow/validation.txt).

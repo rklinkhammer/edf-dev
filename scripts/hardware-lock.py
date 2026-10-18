@@ -6,7 +6,7 @@ from pathlib import Path
 import subprocess
 import sys
 root = Path(__file__).resolve().parents[1]
-mode = fcntl.LOCK_EX if sys.argv[2:3] == ['hardware'] else fcntl.LOCK_SH
+mode = fcntl.LOCK_EX if sys.argv[2:3] in (['hardware'], ['build']) else fcntl.LOCK_SH
 with (root/'.edf-hardware.lock').open('a') as lock:
     try:
         fcntl.flock(lock, mode | fcntl.LOCK_NB)
