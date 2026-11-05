@@ -1,8 +1,8 @@
 SUMMARY = "DVRMC full FPGA image and matching Linux overlay for Arty Z7-20"
 
 # Generated together from the same implemented XSA; see docs/arty.md.
-FILESEXTRAPATHS:prepend := "/hardware/arty-z7-20:/project/config/hardware:"
-SRC_URI = "file://dvrmc.bit file://dvrmc.dtso file://arty-z7-20.json"
+FILESEXTRAPATHS:prepend := "${THISDIR}/files:/hardware/arty-z7-20:/project/config/hardware:"
+SRC_URI = "file://dvrmc.bit file://dvrmc.dtso file://arty-z7-20.json file://check_monitor_uart.py"
 S = "${WORKDIR}"
 COMPATIBLE_MACHINE = "(arty-z7-20|amd-cortexa9thf-neon-common)"
 PACKAGE_ARCH = "${MACHINE_ARCH}"
@@ -30,6 +30,12 @@ python do_patch:append() {
     from pathlib import Path
     path = Path(d.getVar('WORKDIR')) / 'dvrmc.dtso'
     text = path.read_text()
+    import runpy
+    check = runpy.run_path(str(Path(d.getVar('WORKDIR')) / 'check_monitor_uart.py'))
+    try:
+        check['validate'](text)
+    except ValueError as error:
+        bb.fatal(str(error))
     original = 'compatible = "xlnx,controller-axi-0.18";'
     if text.count(original) != 1:
         bb.fatal('Expected exactly one DVRMC controller binding')

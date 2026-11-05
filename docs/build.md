@@ -102,6 +102,23 @@ Production images install `dmotor-access`, whose dependency pulls in the
 versioned kernel module, and `dmotor-runtime`.
 See [board operation](arty.md) for the binding and commissioning implications.
 
+### Monitor UART Lite
+
+The Arty kernel fragment enables built-in `CONFIG_SERIAL_UARTLITE=y` and leaves
+UART Lite console support disabled. The PS serial console is unaffected. Kernel
+configuration fails if the monitor driver is missing or its console is enabled.
+The firmware recipe verifies the generated UART Lite node at 0x42c00000, 64 KiB,
+115200 baud with IRQ wiring; it rejects older hardware exports without that node.
+It does not add a fictional UART to an old bitstream. Generate/import a matched
+hardware bundle before the first image build with the monitor topology.
+
+Do not configure getty or a kernel console on ttyUL devices used by the monitor.
+Find the tty through its device-tree/sysfs mapping rather than assuming ttyUL0.
+The Linux UART Lite driver supplies the tty; the dmotor PS library supplies the
+bounded protocol transport. Full monitor recovery/ARM coordination remains in
+progress. Source changes to dmotor are staged through `software/sources.json`,
+including the controller kernel module and shared monitor codec.
+
 ### Software-only iteration
 
 ```sh

@@ -790,7 +790,7 @@
         aliases {
                 serial0 = "/axi/serial@e0000000";
                 spi0 = "/axi/spi@e000d000";
-                serial1 = "/axi/coresight@f8800000";
+                serial2 = "/axi/coresight@f8800000";
                 ethernet0 = "/axi/ethernet@e000b000";
         };
 
