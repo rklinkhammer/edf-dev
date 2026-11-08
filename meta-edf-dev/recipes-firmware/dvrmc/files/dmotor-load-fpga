@@ -1,0 +1,52 @@
+#!/bin/sh
+# Explicit first-load helper; no autostart, overlay removal or motor enable.
+set -eu
+firmware_dir=/lib/firmware/xilinx/dvrmc-firmware
+state_file=/sys/class/fpga_manager/fpga0/state
+overlays=/sys/kernel/config/device-tree/overlays
+lock_dir=/run/dmotor-load-fpga.lock
+dry_run=0
+usage() {
+    echo "Usage: dmotor-load-fpga [--dry-run] [--firmware-dir DIR]"
+    echo "Load installed full FPGA image and overlay on a freshly booted Zynq."
+}
+fail() { echo "dmotor-load-fpga: $*" >&2; exit 1; }
+while [ "$#" -gt 0 ]; do
+    case "$1" in
+        --help|-h) usage; exit 0 ;;
+        --dry-run) dry_run=1; shift ;;
+        --firmware-dir)
+            [ "$#" -ge 2 ] || fail "--firmware-dir needs a directory"
+            firmware_dir=$2; shift 2 ;;
+        *) usage >&2; fail "unknown argument: $1" ;;
+    esac
+done
+bitstream=$firmware_dir/dvrmc-firmware.bin
+overlay=$firmware_dir/dvrmc-firmware.dtbo
+provenance=$firmware_dir/hardware-inputs.json
+for file in "$bitstream" "$overlay" "$provenance"; do
+    [ -f "$file" ] && [ -s "$file" ] || fail "missing or empty file: $file"
+done
+command -v fpgautil >/dev/null 2>&1 || fail "fpgautil is not installed"
+if [ "$dry_run" -eq 1 ]; then
+    printf 'Bitstream: %s\nOverlay: %s\nProvenance: %s\n' "$bitstream" "$overlay" "$provenance"
+    echo "Dry run: would invoke fpgautil -b BITSTREAM -o OVERLAY, then require state=operating."
+    exit 0
+fi
+[ "$(id -u)" -eq 0 ] || fail "run as root (sudo dmotor-load-fpga)"
+mkdir "$lock_dir" 2>/dev/null || fail "another load is running or stale lock exists: $lock_dir"
+trap 'rmdir "$lock_dir"' EXIT
+trap 'exit 130' INT
+trap 'exit 143' TERM
+[ -r "$state_file" ] || fail "FPGA Manager state is unavailable: $state_file"
+[ "$(cat "$state_file")" != operating ] || fail "FPGA is already operating; live reload is not supported"
+for existing in "$overlays"/*; do
+    [ ! -e "$existing" ] || fail "overlay already present: $existing; reboot before loading"
+done
+[ ! -e /dev/dmotor0 ] || fail "controller device already exists; reboot before loading"
+printf 'Loading %s with %s\n' "$bitstream" "$overlay"
+# A failure may leave partial state. Never remove/retry overlays automatically.
+fpgautil -b "$bitstream" -o "$overlay" || fail "FPGA/overlay load failed; inspect kernel log before retrying"
+state=$(cat "$state_file")
+[ "$state" = operating ] || fail "load returned but FPGA Manager state is '$state'"
+echo "FPGA Manager state: operating. No motor configuration or enable was performed."

@@ -2,7 +2,7 @@ SUMMARY = "DVRMC full FPGA image and matching Linux overlay for Arty Z7-20"
 
 # Generated together from the same implemented XSA; see docs/arty.md.
 FILESEXTRAPATHS:prepend := "${THISDIR}/files:/hardware/arty-z7-20:/project/config/hardware:"
-SRC_URI = "file://dvrmc.bit file://dvrmc.dtso file://arty-z7-20.json file://check_monitor_uart.py"
+SRC_URI = "file://dvrmc.bit file://dvrmc.dtso file://arty-z7-20.json file://check_monitor_uart.py file://dmotor-load-fpga"
 S = "${WORKDIR}"
 COMPATIBLE_MACHINE = "(arty-z7-20|amd-cortexa9thf-neon-common)"
 PACKAGE_ARCH = "${MACHINE_ARCH}"
@@ -15,7 +15,12 @@ inherit dfx_user_dts
 LICENSE = "CLOSED"
 LIC_FILES_CHKSUM = ""
 
+RDEPENDS:${PN} += "fpga-manager-script"
+FILES:${PN} += "${sbindir}/dmotor-load-fpga"
+
 do_install:append() {
+    install -d ${D}${sbindir}
+    install -m 0755 ${WORKDIR}/dmotor-load-fpga ${D}${sbindir}/dmotor-load-fpga
     install -m 0644 ${WORKDIR}/arty-z7-20.json ${D}${nonarch_base_libdir}/firmware/xilinx/${FW_INSTALL_DIR}/hardware-inputs.json
 }
 

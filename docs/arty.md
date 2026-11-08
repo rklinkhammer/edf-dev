@@ -18,11 +18,39 @@ base device tree. Do not remove/reload PL while applications own its devices.
 After boot, with motor drive externally inhibited:
 
 ```sh
-sudo fpgautil -b /lib/firmware/xilinx/dvrmc-firmware/dvrmc-firmware.bin \
-  -o /lib/firmware/xilinx/dvrmc-firmware/dvrmc-firmware.dtbo
+sudo dmotor-load-fpga --dry-run
+sudo dmotor-load-fpga
 cat /sys/class/fpga_manager/fpga0/state
 cat /usr/share/dmotor/source-version.json
 ```
+
+`dmotor-load-fpga` is installed in `/usr/sbin` by `dvrmc-firmware` in newly
+built images. It loads the packaged `.bin` and `.dtbo` together using `fpgautil`,
+checks that provenance is present, and verifies the resulting manager state.
+It does not verify cryptographic pairing of arbitrary files: use the matched EDF
+package. `--firmware-dir DIR` selects another directory containing the same three
+filenames. `--dry-run` checks files/tool availability without programming hardware.
+
+This is an explicit first-load command, not a boot service or live-reload tool.
+It refuses an already operating FPGA, existing overlays or `/dev/dmotor0`, and
+serializes invocations with `/run/dmotor-load-fpga.lock`. It never removes overlays,
+stops applications, retries partial loads or enables motors. After a failed load,
+inspect the kernel log and reboot before another attempt. If a killed process
+left a lock, remove it only after confirming no load process remains.
+
+To use the helper on an existing image that already contains `fpgautil` and the
+matched firmware, copy just the script from the EDF checkout:
+
+```sh
+scp meta-edf-dev/recipes-firmware/dvrmc/files/dmotor-load-fpga amd-edf@amd-edf:~/
+ssh amd-edf@amd-edf
+sudo install -m 0755 ~/dmotor-load-fpga /usr/sbin/dmotor-load-fpga
+sudo dmotor-load-fpga --dry-run
+sudo dmotor-load-fpga
+```
+
+Use the actual account/address. Copying/installing this helper does not update
+firmware or automatically program PL. Full EDF image build/export remains supported.
 
 Expected FPGA Manager state is `operating`. Firmware provenance is stored beside
 it in `hardware-inputs.json`. Loading PL does not configure or enable motors.
