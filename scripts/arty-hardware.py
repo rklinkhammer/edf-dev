@@ -3,6 +3,7 @@
 import argparse
 import hashlib
 import json
+import os
 from pathlib import Path
 import re
 import shutil
@@ -10,6 +11,14 @@ import sys
 
 MACHINE = 'arty-z7-20'
 MANIFEST = Path('config/hardware/arty-z7-20.json')
+
+
+def select_target(target):
+    global MACHINE, MANIFEST
+    if target not in ('arty-z7-20', 'zybo-z7-20'):
+        raise ValueError('Unsupported DMOTOR hardware target: ' + target)
+    MACHINE = target
+    MANIFEST = Path(f'config/hardware/{target}.json')
 
 
 def sha(path):
@@ -30,8 +39,8 @@ def install(root, sdt, conf):
         raise ValueError('Generate with -g full: base Linux tree must not contain PL devices or firmware')
     if '43c00000' not in overlay.read_text() or 'firmware-name' not in overlay.read_text():
         raise ValueError('Expected DVRMC controller and firmware reference in full overlay')
-    if 'arty-z7-20' not in (sdt / 'system-top.dts').read_text():
-        raise ValueError('Expected an Arty Z7-20 SDT export')
+    if MACHINE not in (sdt / 'system-top.dts').read_text():
+        raise ValueError(f'Expected a {MACHINE} SDT export')
     destination = root / f'hardware/{MACHINE}'
     destination.mkdir(parents=True, exist_ok=True)
     if sdt.resolve() != (destination / 'sdt').resolve():
@@ -80,11 +89,18 @@ def install(root, sdt, conf):
             # Regenerate symbols with dtc -@; Lopper's memory-node symbol can be stale.
             content = re.sub(r'\n        __symbols__ \{.*?\n        \};', '', content, flags=re.S)
             # SDTGen 2026.1 emits a MicroBlaze root compatible for this Zynq board.
-            content = content.replace('compatible = "xlnx,arty-z7-20-microblaze";',
-                                      'compatible = "digilent,arty-z7-20", "xlnx,zynq-7000";')
-            content = content.replace('model = "Xilinx Zynq";', 'model = "Digilent Arty Z7-20 DVRMC";')
+            content = content.replace(f'compatible = "xlnx,{MACHINE}-microblaze";',
+                                      f'compatible = "digilent,{MACHINE}", "xlnx,zynq-7000";')
+            title = 'Arty Z7-20' if MACHINE == 'arty-z7-20' else 'Zybo Z7-20'
+            content = content.replace('model = "Xilinx Zynq";', f'model = "Digilent {title} DVRMC";')
             if '"xlnx,zynq-7000"' not in content:
                 raise ValueError('Linux tree lacks Zynq-7000 machine compatible')
+        if source == linux and MACHINE == 'zybo-z7-20':
+            from zybo_linux import prepare
+            content = prepare(content)
+        if MACHINE == 'zybo-z7-20' and source.name in (f'{MACHINE}-cortexa9-fsbl.dts', 'system-top-no-pl.dts'):
+            from zybo_linux import prepare
+            content = prepare(content, linux=False)
         target.write_text(content)
         tracked.append(target)
     files = tracked + [destination / 'dvrmc.bit', destination / 'dvrmc.dtso']
@@ -98,6 +114,8 @@ def install(root, sdt, conf):
 
 def verify(root, hardware=None):
     record = json.loads((root / MANIFEST).read_text())
+    if record.get('machine', 'arty-z7-20') != MACHINE:
+        raise ValueError('Hardware bundle target mismatch')
     for name, expected in record['files'].items():
         relative = Path(name)
         if relative.is_absolute() or '..' in relative.parts:
@@ -110,17 +128,19 @@ def verify(root, hardware=None):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--target', choices=('arty-z7-20', 'zybo-z7-20'), default=os.environ.get('EDF_TARGET', 'arty-z7-20'))
     parser.add_argument('--root', type=Path, default=Path(__file__).resolve().parents[1])
     parser.add_argument('--hardware-root', type=Path)
     parser.add_argument('--sdt', type=Path)
     parser.add_argument('--conf', type=Path)
     args = parser.parse_args()
+    select_target(args.target)
     if bool(args.sdt) != bool(args.conf):
         parser.error('--sdt and --conf are required together for installation')
     if args.sdt:
         install(args.root.resolve(), args.sdt.resolve(), args.conf.resolve())
     verify(args.root, args.hardware_root)
-    print('PASS matched Arty hardware bundle')
+    print(f'PASS matched {MACHINE} hardware bundle')
 
 
 if __name__ == '__main__':

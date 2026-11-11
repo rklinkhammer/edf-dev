@@ -1,10 +1,10 @@
-SUMMARY = "DVRMC full FPGA image and matching Linux overlay for Arty Z7-20"
+SUMMARY = "DVRMC full FPGA image and matching Linux overlay for supported Zynq boards"
 
 # Generated together from the same implemented XSA; see docs/arty.md.
-FILESEXTRAPATHS:prepend := "${THISDIR}/files:/hardware/arty-z7-20:/project/config/hardware:"
-SRC_URI = "file://dvrmc.bit file://dvrmc.dtso file://arty-z7-20.json file://check_monitor_uart.py file://dmotor-load-fpga"
+FILESEXTRAPATHS:prepend := "${THISDIR}/files:/hardware/${EDF_DVRMC_BOARD}:/project/config/hardware:"
+SRC_URI = "file://dvrmc.bit file://dvrmc.dtso file://${EDF_DVRMC_BOARD}.json file://check_monitor_uart.py file://dmotor-load-fpga"
 S = "${WORKDIR}"
-COMPATIBLE_MACHINE = "(arty-z7-20|amd-cortexa9thf-neon-common)"
+COMPATIBLE_MACHINE = "(arty-z7-20|zybo-z7-20|amd-cortexa9thf-neon-common)"
 PACKAGE_ARCH = "${MACHINE_ARCH}"
 # The generated overlay is self-contained; it does not include kernel headers.
 KERNEL_INCLUDE = ""
@@ -21,12 +21,12 @@ FILES:${PN} += "${sbindir}/dmotor-load-fpga"
 do_install:append() {
     install -d ${D}${sbindir}
     install -m 0755 ${WORKDIR}/dmotor-load-fpga ${D}${sbindir}/dmotor-load-fpga
-    install -m 0644 ${WORKDIR}/arty-z7-20.json ${D}${nonarch_base_libdir}/firmware/xilinx/${FW_INSTALL_DIR}/hardware-inputs.json
+    install -m 0644 ${WORKDIR}/${EDF_DVRMC_BOARD}.json ${D}${nonarch_base_libdir}/firmware/xilinx/${FW_INSTALL_DIR}/hardware-inputs.json
 }
 
 python () {
     if d.getVar('EDF_DVRMC') != '1':
-        raise bb.parse.SkipRecipe('DVRMC firmware is selected only by the Arty target')
+        raise bb.parse.SkipRecipe('DVRMC firmware is selected only by DMOTOR board targets')
 }
 
 # The production binding owns the GPIO-to-HALT source and excludes UIO.
@@ -38,7 +38,10 @@ python do_patch:append() {
     import runpy
     check = runpy.run_path(str(Path(d.getVar('WORKDIR')) / 'check_monitor_uart.py'))
     try:
-        check['validate'](text)
+        if d.getVar('EDF_MONITOR_UART') == 'uartlite':
+            check['validate'](text)
+        elif d.getVar('EDF_MONITOR_UART') != 'ps-uart0':
+            raise ValueError('Unknown monitor UART topology')
     except ValueError as error:
         bb.fatal(str(error))
     original = 'compatible = "xlnx,controller-axi-0.18";'
@@ -48,9 +51,11 @@ python do_patch:append() {
     if mode == 'inspection':
         binding = 'compatible = "generic-uio";\n                linux,uio-name = "dmotor-inspection";'
     elif mode == 'production':
-        if 'axi_gpio_3: gpio@41230000' not in text:
-            bb.fatal('Production HALT binding requires the reviewed DVRMC axi_gpio_3 topology')
-        binding = 'compatible = "dmotor,controller-0.18";\n                halt-gpios = <&axi_gpio_3 0 0>;'
+        gpio = d.getVar('EDF_HALT_GPIO')
+        address = d.getVar('EDF_HALT_GPIO_ADDRESS')
+        if f'{gpio}: gpio@{address}' not in text:
+            bb.fatal('Production HALT binding requires the reviewed board-specific GPIO topology')
+        binding = f'compatible = "dmotor,controller-0.18";\n                halt-gpios = <&{gpio} 0 0>;'
     else:
         bb.fatal('EDF_DMOTOR_ACCESS must be inspection or production')
     path.write_text(text.replace(original, binding))

@@ -38,6 +38,7 @@ def replace_file(source, destination):
 
 def publish(candidate, root, backup):
     """Back up every affected file; manifest is published last, rollback on failure."""
+    importer.verify(candidate)
     record = json.loads((candidate/importer.MANIFEST).read_text())
     paths = [Path(name) for name in record['files']] + [importer.MANIFEST]
     for path in paths:
@@ -66,6 +67,7 @@ def publish(candidate, root, backup):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('--target', choices=('arty-z7-20', 'zybo-z7-20'), default=os.environ.get('EDF_TARGET', 'arty-z7-20'))
     inputs = parser.add_mutually_exclusive_group()
     inputs.add_argument('--project', type=Path, default=None, help='Legacy saved project override; skips DMOTOR HLS/IP rebuild')
     inputs.add_argument('--xsa', type=Path, help='Use an existing fixed XSA including bitstream; skip Vivado')
@@ -78,25 +80,27 @@ def main():
     parser.add_argument('--generate-only', action='store_true', help='Build and validate candidate without importing')
     parser.add_argument('--export-image', action='store_true', help='After import, build and export Linux/boot image')
     args = parser.parse_args()
+    importer.select_target(args.target)
     if args.jobs < 1 or (args.generate_only and args.export_image):
         parser.error('Positive jobs required; generate-only cannot export an image')
     dmotor = runpy.run_path(str(ROOT/'scripts/dmotor-source.py'))['resolve']()
-    env = {**os.environ, 'EDF_DMOTOR_SOURCE':str(dmotor)}
+    env = {**os.environ, 'EDF_DMOTOR_SOURCE':str(dmotor), 'EDF_TARGET':args.target}
     product = not (args.project or args.xsa or args.bundle)
     if product and not (dmotor/'tools/build.py').is_file():
         parser.error('Selected DMOTOR revision predates the product workflow; update the pin or set EDF_DMOTOR_SOURCE')
     hardware_key = runpy.run_path(str(dmotor/'tools/build.py'))['fingerprint']() if product else None
-    source = (args.bundle or args.xsa or args.project or dmotor/'build/product/vivado/dvrmc.xpr').expanduser().resolve()
+    default_project = dmotor / ('build/product/vivado/dvrmc.xpr' if args.target == 'arty-z7-20' else 'build/product/zybo-z7-20/release-vivado/zybo-z7-20.xpr')
+    source = (args.bundle or args.xsa or args.project or default_project).expanduser().resolve()
     if not product and not source.is_file(): parser.error(f'Missing input: {source}')
     print(f'DMOTOR hardware/software source: {dmotor}\nInput: {source}',flush=True)
     if args.dry_run:
         if product:
-            run([sys.executable,dmotor/'tools/build.py','project','--dry-run'],dmotor,env)
+            run([sys.executable,dmotor/'tools/build.py','project','--platform',args.target,'--dry-run'],dmotor,env)
         print('Stages: '+('verified bundle import' if args.bundle else 'Vivado/XSA -> SDT -> candidate validation -> bundle -> import')+
               (' -> image -> export' if args.export_image else ''),flush=True)
         return
     if product:
-        run([sys.executable,dmotor/'tools/build.py','project','--amd-root',args.vivado.parents[2]]+
+        run([sys.executable,dmotor/'tools/build.py','project','--platform',args.target,'--amd-root',args.vivado.parents[2]]+
             (['--force'] if args.force else []),dmotor,env)
     if not args.bundle:
         for tool in ([args.sdtgen] if args.xsa else [args.vivado,args.sdtgen]):
@@ -104,7 +108,7 @@ def main():
     docker = ['docker']
     if os.environ.get('EDF_DOCKER_CONTEXT'): docker += ['--context',os.environ['EDF_DOCKER_CONTEXT']]
     artifacts = Path(subprocess.check_output(['python3','scripts/host-config.py'],cwd=ROOT,text=True).strip())
-    stage = artifacts/'arty-hardware'/ (datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')+'-'+uuid.uuid4().hex[:8])
+    stage = artifacts/('arty-hardware' if args.target == 'arty-z7-20' else 'zybo-hardware')/ (datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')+'-'+uuid.uuid4().hex[:8])
     stage.mkdir(parents=True)
     print(f'Logs, candidate and backup: {stage}',flush=True)
     env['EDF_ARTIFACTS']=str(artifacts)
@@ -117,18 +121,18 @@ def main():
             raise ValueError('Bundle and selected DMOTOR hardware sources differ; select the matching checkout')
         if not args.generate_only: publish(candidate,ROOT,stage/'previous')
         if args.export_image:
-            for action in ('image','export'): run([ROOT/'edf','--target','arty-z7-20',action],ROOT,env)
+            for action in ('image','export'): run([ROOT/'edf','--target',args.target,action],ROOT,env)
         print(('Verified candidate bundle: ' if args.generate_only else 'Imported verified bundle: ')+str(stage),flush=True)
         return
     if args.xsa: shutil.copy2(source,stage/'dvrmc.xsa')
     else:
         run([args.vivado,'-mode','batch','-source',ROOT/'scripts/vivado/arty-build.tcl',
-             '-tclargs',source,stage,args.jobs],stage)
+             '-tclargs',source,stage,args.jobs,args.target],stage)
     run([args.sdtgen,'-xsa',stage/'dvrmc.xsa','-dir',stage/'sdt'],stage)
     # Mount staging independently of /hardware: failed generation cannot damage live inputs.
     run(docker+['compose','up','-d','--build','--wait','hashserv'],ROOT,env)
     run(docker+['compose','run','--rm','--no-deps','-T','-v',f'{stage}:/generation',
-                '-e','EDF_TARGET=zc702','shell','bash','/opt/edf-scripts/arty-generate.sh'],ROOT,env)
+                '-e','EDF_TARGET=zc702','-e',f'EDF_HARDWARE_TARGET={args.target}','shell','bash','/opt/edf-scripts/arty-generate.sh'],ROOT,env)
     candidate = stage/'candidate'
     importer.install(candidate,stage/'sdt',stage/'conf')
     importer.verify(candidate)
@@ -136,7 +140,7 @@ def main():
               'generate_only':args.generate_only,'dmotor_source':str(dmotor)},indent=2)+'\n')
     if product and hardware_key != runpy.run_path(str(dmotor/'tools/build.py'))['fingerprint']():
         raise ValueError('DMOTOR sources changed during board build; candidate not imported')
-    metadata={'dmotor_commit':subprocess.check_output(['git','-C',str(dmotor),'rev-parse','HEAD'],text=True).strip(),
+    metadata={'machine':args.target,'dmotor_commit':subprocess.check_output(['git','-C',str(dmotor),'rev-parse','HEAD'],text=True).strip(),
               'dmotor_hardware_sha256':hardware_key,
               'tools':{'vivado':str(args.vivado),'sdtgen':str(args.sdtgen)},
               'origin':'product' if product else 'legacy-explicit-input'}
@@ -147,10 +151,10 @@ def main():
     print('Portable hardware bundle: '+str(pack(stage,metadata)),flush=True)
     if not args.generate_only:
         publish(candidate,ROOT,stage/'previous')
-        print('Installed and verified matched Arty bundle.',flush=True)
+        print(f'Installed and verified matched {args.target} bundle.',flush=True)
     if args.export_image:
         for action in ('image','export'):
-            run([ROOT/'edf','--target','arty-z7-20',action],ROOT,env)
+            run([ROOT/'edf','--target',args.target,action],ROOT,env)
     print(f'Complete: {stage}',flush=True)
 
 if __name__ == '__main__':

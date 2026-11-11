@@ -1,8 +1,12 @@
 # Arguments are passed as argv, never substituted into Tcl source.
-if {[llength $argv] != 3} {error "Expected project.xpr output-directory jobs"}
-lassign $argv project output jobs
+if {[llength $argv] ni {3 4}} {error "Expected project.xpr output-directory jobs"}
+lassign $argv project output jobs board
+if {$board eq ""} {set board arty-z7-20}
+if {$board ni {arty-z7-20 zybo-z7-20}} {error "Unsupported board: $board"}
 open_project $project
-if {[get_property PART [current_project]] ne "xc7z020clg400-1"} {error "Expected Arty Z7-20 part xc7z020clg400-1"}
+set boardpart [get_property BOARD_PART [current_project]]
+if {![string match "*:${board}:*" $boardpart]} {error "Project board $boardpart does not match $board"}
+if {[get_property PART [current_project]] ne "xc7z020clg400-1"} {error "Expected Zynq Z7-20 part xc7z020clg400-1"}
 save_project_as -exclude_run_results edf_arty [file join $output project]
 # Work only in the saved project. Keep original source/IP revisions; no automatic upgrades.
 close_project

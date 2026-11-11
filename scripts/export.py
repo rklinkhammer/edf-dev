@@ -77,7 +77,7 @@ def main(build):
         out, work = Path(output), Path(work)
         software_identity = None
         hardware_identity = None
-        if target == 'arty-z7-20':
+        if target in ('arty-z7-20', 'zybo-z7-20'):
             # Read the actual built filesystem, never the current source checkout.
             wanted = {'usr/share/dmotor/source-version.json': 'dmotor-source-version.json',
                       'lib/firmware/xilinx/dvrmc-firmware/hardware-inputs.json': 'dvrmc-hardware-inputs.json',
@@ -89,7 +89,7 @@ def main(build):
                         content = archive.extractfile(member).read()
                         (out/wanted[name]).write_bytes(content)
             if not (out/'dmotor-source-version.json').is_file():
-                raise RuntimeError('Arty image lacks DMOTOR provenance; rebuild image before export')
+                raise RuntimeError('DMOTOR image lacks provenance; rebuild image before export')
             software_identity = json.loads((out/'dmotor-source-version.json').read_text())
             if (out/'dvrmc-hardware-inputs.json').exists():
                 hardware_identity = json.loads((out/'dvrmc-hardware-inputs.json').read_text())

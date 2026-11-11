@@ -1,5 +1,7 @@
 # EDF development environment
 
+[Zybo Z7-20 workflow](docs/zybo.md): `./edf --target zybo-z7-20 build` builds hardware, boot/Linux and exports the SD image.
+
 Docker-based AMD EDF/Yocto builds with direct BitBake access, local hash-server
 storage, and Linux/macOS Docker-context support.
 

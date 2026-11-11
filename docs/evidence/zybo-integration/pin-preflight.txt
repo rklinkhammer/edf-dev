@@ -1,0 +1,4 @@
+usage: check_zybo_interface.py [-h] [--require-pins]
+check_zybo_interface.py: error: Assign FPGA pins before hardware build: bumper_fault, pl_uart0_rxd, pl_uart0_txd
+PASS Zybo scaffold: Z7-20, 1 GiB DDR, 20 MHz controller clock, port directions and unique explicit pins
+PENDING pin assignments: bumper_fault, pl_uart0_rxd, pl_uart0_txd

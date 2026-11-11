@@ -1,0 +1,7 @@
+DMOTOR hardware/software source: /home/rklinkhammer/workspace/dmotor
+Input: /home/rklinkhammer/workspace/dmotor/build/product/zybo-z7-20/release-vivado/zybo-z7-20.xpr
++ /usr/bin/python3 /home/rklinkhammer/workspace/dmotor/tools/build.py project --platform zybo-z7-20 --dry-run
+DMOTOR source: /home/rklinkhammer/workspace/dmotor
+Hardware fingerprint: 573f223399620b5900dde4317f1a5b6c1dfd3e41c6271e416ac18f2e1d716567
+Stages: direct 1 ms product sources -> atomic HLS csim/synthesis/cosim -> native + RTL/PS co-simulation + PS software tests -> controller IP export -> zybo-z7-20 board project
+Stages: Vivado/XSA -> SDT -> candidate validation -> bundle -> import -> image -> export

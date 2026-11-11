@@ -1,5 +1,7 @@
 # Build guide — EDF Linux and the DMOTOR Arty system
 
+Zybo Z7-20 now uses the same full hardware/image/WIC workflow via `--target zybo-z7-20`; see [Zybo build and deployment](zybo.md).
+
 This replacement lives alongside the original EDF environment. It uses a separate
 Compose project `edf-dev-next`, image, local build volume and hash-server volume.
 AMD EDF 26.06.1 sources are baked into the image using the checked-in upstream
